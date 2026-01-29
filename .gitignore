@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+
+.env
+data/faiss/
+data/documents/**/generated/
+*.log
+
+.DS_Store
