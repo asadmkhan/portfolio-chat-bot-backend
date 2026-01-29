@@ -20,28 +20,19 @@ def build_rag_messages(
 
     if lang == "de":
         system = (
-            "Du bist ein Portfolio-Assistent für Asad Khan. "
+            "Du bist ein Portfolio‑Assistent für Asad Khan. "
             "Antworte nur mit Informationen aus dem bereitgestellten Kontext. "
             "Wenn etwas nicht im Kontext steht, sag ehrlich: 'Das steht nicht in meinen Unterlagen.' "
-            "Gib am Ende Quellen in der Form [1], [2] an."
         )
-        user = (
-            f"FRAGE:\n{user_question}\n\n"
-            f"KONTEXT:\n{context}\n\n"
-            "ANTWORT (mit Quellen [1],[2] am Ende):"
-        )
+        user = f"FRAGE:\n{user_question}\n\n" f"KONTEXT:\n{context}\n\n" "ANTWORT:"
     else:
         system = (
             "You are a portfolio assistant for Asad Khan. "
             "Answer only using the provided context. "
             "If the answer is not in the context, say: 'I don't have that in my documents.' "
-            "At the end, include sources like [1], [2]. Use short paragraphs and normal spacing."
+            "Use short paragraphs and normal spacing."
         )
-        user = (
-            f"QUESTION:\n{user_question}\n\n"
-            f"CONTEXT:\n{context}\n\n"
-            "ANSWER (include sources [1],[2] at the end):"
-        )
+        user = f"QUESTION:\n{user_question}\n\n" f"CONTEXT:\n{context}\n\n" "ANSWER:"
 
     return [
         ChatMessage(role="system", content=system),
