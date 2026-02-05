@@ -39,6 +39,9 @@ class Settings:
     log_level: str
     sentry_dsn: str | None
     log_message_max_chars: int
+    mmr_use: bool
+    mmr_fetch_k: int
+    mmr_lambda: float
 
 
 settings = Settings(
@@ -48,4 +51,7 @@ settings = Settings(
     log_level=_get_env("LOG_LEVEL", "INFO") or "INFO",
     sentry_dsn=_get_env("SENTRY_DSN"),
     log_message_max_chars=_get_env_int("LOG_MESSAGE_MAX_CHARS", 800),
+    mmr_use=_get_env_bool("MMR_USE", True),
+    mmr_fetch_k=_get_env_int("MMR_FETCH_K", 15),
+    mmr_lambda=float(_get_env("MMR_LAMBDA", "0.6") or "0.6"),
 )

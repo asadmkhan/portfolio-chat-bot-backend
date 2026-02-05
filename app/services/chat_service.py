@@ -25,6 +25,9 @@ async def stream_chat(
     conversation_id: str | None = None,
     compress_context: bool | None = None,
     include_citations: bool | None = None,
+    use_mmr: bool | None = None,
+    fetch_k: int | None = None,
+    mmr_lambda: float | None = None,
 ) -> AsyncGenerator[str, None]:
     started_at = time.perf_counter()
     try:
@@ -40,7 +43,18 @@ async def stream_chat(
 
         retriever = FaissRetriever.get(lang)
         top_k = k or 5
-        chunks = retriever.search(user_message, k=top_k)
+        resolved_use_mmr = settings.mmr_use if use_mmr is None else use_mmr
+        resolved_fetch_k = (
+            settings.mmr_fetch_k if fetch_k is None else fetch_k
+        ) or max(10, top_k * 3)
+        resolved_mmr_lambda = settings.mmr_lambda if mmr_lambda is None else mmr_lambda
+        chunks = retriever.search(
+            user_message,
+            k=top_k,
+            use_mmr=resolved_use_mmr,
+            fetch_k=resolved_fetch_k,
+            mmr_lambda=resolved_mmr_lambda,
+        )
 
         messages = build_rag_messages(
             user_message,
@@ -58,6 +72,9 @@ async def stream_chat(
                     "conversation_id": conversation_id,
                     "compress_context": compress_context,
                     "include_citations": include_citations,
+                    "use_mmr": resolved_use_mmr,
+                    "fetch_k": resolved_fetch_k,
+                    "mmr_lambda": resolved_mmr_lambda,
                     "message": user_message[: settings.log_message_max_chars],
                     "chunk_ids": [c.get("id") for c in chunks],
                 }

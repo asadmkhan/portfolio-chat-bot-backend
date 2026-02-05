@@ -17,6 +17,9 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     compress_context: bool | None = None
     include_citations: bool | None = None
+    use_mmr: bool | None = None
+    fetch_k: int | None = Field(default=None, ge=1, le=50)
+    mmr_lambda: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 @router.post("/chat/stream")
@@ -36,6 +39,9 @@ async def chat_stream(
         conversation_id=payload.conversation_id,
         compress_context=payload.compress_context,
         include_citations=payload.include_citations,
+        use_mmr=payload.use_mmr,
+        fetch_k=payload.fetch_k,
+        mmr_lambda=payload.mmr_lambda,
     )
 
     return StreamingResponse(
