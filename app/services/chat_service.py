@@ -14,6 +14,34 @@ from app.rag.prompt import build_rag_messages
 from app.ai.factory import get_ai_client
 
 logger = logging.getLogger("app.chat")
+_conversations: dict[str, list[dict[str, str]]] = {}
+_max_history = 6
+
+
+def _strip_json_block(text: str) -> str:
+    start = text.find("<json>")
+    end = text.find("</json>")
+    if start == -1:
+        return text.strip()
+    if end == -1:
+        return text[:start].strip()
+    return (text[:start] + text[end + 7 :]).strip()
+
+
+def _get_history(conversation_id: str | None) -> list[dict[str, str]]:
+    if not conversation_id:
+        return []
+    history = _conversations.get(conversation_id, [])
+    return history[-_max_history :]
+
+
+def _append_history(conversation_id: str | None, role: str, content: str) -> None:
+    if not conversation_id:
+        return
+    history = _conversations.setdefault(conversation_id, [])
+    history.append({"role": role, "content": content})
+    if len(history) > _max_history * 2:
+        del history[:-_max_history * 2]
 
 
 async def stream_chat(
@@ -56,12 +84,22 @@ async def stream_chat(
             mmr_lambda=resolved_mmr_lambda,
         )
 
+        history = _get_history(conversation_id)
         messages = build_rag_messages(
             user_message,
             chunks,
             lang,
             max_chars_per_chunk=max_chars_per_chunk,
+            history=history,
         )
+
+        resolved_include_citations = True if include_citations is None else include_citations
+        if resolved_include_citations:
+            sources = [
+                {"id": c.get("id"), "source": c.get("source"), "score": c.get("score")}
+                for c in chunks
+            ]
+            yield sse(events.SOURCES, json.dumps(sources))
 
         logger.info(
             json.dumps(
@@ -71,7 +109,7 @@ async def stream_chat(
                     "k": top_k,
                     "conversation_id": conversation_id,
                     "compress_context": compress_context,
-                    "include_citations": include_citations,
+                    "include_citations": resolved_include_citations,
                     "use_mmr": resolved_use_mmr,
                     "fetch_k": resolved_fetch_k,
                     "mmr_lambda": resolved_mmr_lambda,
@@ -81,11 +119,16 @@ async def stream_chat(
             )
         )
 
+        _append_history(conversation_id, "user", user_message)
+
         ai = get_ai_client()
+        assistant_text = ""
         async for token in ai.stream(messages):
+            assistant_text += token
             yield sse(events.CHUNK, token)
 
         yield sse(events.DONE, "[DONE]")
+        _append_history(conversation_id, "assistant", _strip_json_block(assistant_text))
 
     except Exception as ex:
         logger.exception(

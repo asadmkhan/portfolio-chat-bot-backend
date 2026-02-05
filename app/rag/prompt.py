@@ -18,11 +18,22 @@ def build_rag_messages(
     chunks: List[Dict],
     lang: str,
     max_chars_per_chunk: int | None = None,
+    history: List[Dict] | None = None,
 ) -> list[ChatMessage]:
     context = build_context(
         chunks,
         max_chars_per_chunk=max_chars_per_chunk or 900,
     )
+    history_lines: list[str] = []
+    if history:
+        for msg in history:
+            role = msg.get("role", "user")
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            label = "User" if role == "user" else "Assistant"
+            history_lines.append(f"{label}: {content}")
+    history_text = "\n".join(history_lines).strip()
 
     if lang == "de":
         system = (
@@ -34,7 +45,15 @@ def build_rag_messages(
             "Schema: {\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
             "Wenn etwas fehlt, nutze leere Liste oder leeren String."
         )
-        user = f"FRAGE:\n{user_question}\n\nKONTEXT:\n{context}\n\nANTWORT:"
+        if history_text:
+            user = (
+                f"VERLAUF:\n{history_text}\n\n"
+                f"FRAGE:\n{user_question}\n\n"
+                f"KONTEXT:\n{context}\n\n"
+                "ANTWORT:"
+            )
+        else:
+            user = f"FRAGE:\n{user_question}\n\nKONTEXT:\n{context}\n\nANTWORT:"
     else:
         system = (
             "You are a portfolio assistant for Asad Khan. "
@@ -45,7 +64,15 @@ def build_rag_messages(
             "Schema: {\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
             "If something is missing, use empty list or empty string."
         )
-        user = f"QUESTION:\n{user_question}\n\nCONTEXT:\n{context}\n\nANSWER:"
+        if history_text:
+            user = (
+                f"HISTORY:\n{history_text}\n\n"
+                f"QUESTION:\n{user_question}\n\n"
+                f"CONTEXT:\n{context}\n\n"
+                "ANSWER:"
+            )
+        else:
+            user = f"QUESTION:\n{user_question}\n\nCONTEXT:\n{context}\n\nANSWER:"
 
     return [
         ChatMessage(role="system", content=system),
