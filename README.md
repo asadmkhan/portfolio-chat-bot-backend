@@ -6,6 +6,8 @@ pip install -r requirements.txt
 ## Configure
 copy .env.example .env
 # fill OPENAI_API_KEY
+# (optional) set API_KEY to protect /v1/chat/stream
+# (optional) adjust RATE_LIMIT, RATE_LIMIT_ENABLED, LOG_LEVEL, SENTRY_DSN
 
 ## Ingest
 python -m scripts.ingest

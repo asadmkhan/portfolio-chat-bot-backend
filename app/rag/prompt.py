@@ -14,9 +14,15 @@ def build_context(chunks, max_chars_per_chunk=900):
 
 
 def build_rag_messages(
-    user_question: str, chunks: List[Dict], lang: str
+    user_question: str,
+    chunks: List[Dict],
+    lang: str,
+    max_chars_per_chunk: int | None = None,
 ) -> list[ChatMessage]:
-    context = build_context(chunks)
+    context = build_context(
+        chunks,
+        max_chars_per_chunk=max_chars_per_chunk or 900,
+    )
 
     if lang == "de":
         system = (

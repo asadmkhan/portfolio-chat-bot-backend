@@ -6,3 +6,5 @@ pydantic
 python-dotenv
 openai
 httpx
+slowapi
+sentry-sdk
