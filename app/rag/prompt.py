@@ -29,10 +29,10 @@ def build_rag_messages(
             "Du bist ein Portfolio-Assistent fuer Asad Khan. "
             "Antworte nur mit Informationen aus dem bereitgestellten Kontext. "
             "Wenn etwas nicht im Kontext steht, sag ehrlich: 'Das steht nicht in meinen Unterlagen.' "
-            "Antworte NUR mit gueltigem JSON, ohne Markdown oder zusaetzlichen Text. "
-            "Verwende dieses Schema: "
-            "{\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
-            "Wenn etwas fehlt, setze es auf leere Liste oder leeren String."
+            "Antworte als klarer Fliesstext fuer das Streaming. "
+            "Haenge am ENDE eine JSON-Struktur in einem <json>...</json>-Block an. "
+            "Schema: {\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
+            "Wenn etwas fehlt, nutze leere Liste oder leeren String."
         )
         user = f"FRAGE:\n{user_question}\n\nKONTEXT:\n{context}\n\nANTWORT:"
     else:
@@ -40,9 +40,9 @@ def build_rag_messages(
             "You are a portfolio assistant for Asad Khan. "
             "Answer only using the provided context. "
             "If the answer is not in the context, say: 'I don't have that in my documents.' "
-            "Respond ONLY with valid JSON, no Markdown or extra text. "
-            "Use this schema: "
-            "{\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
+            "Respond as clear plain text for streaming. "
+            "Append a JSON block at the END inside <json>...</json>. "
+            "Schema: {\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
             "If something is missing, use empty list or empty string."
         )
         user = f"QUESTION:\n{user_question}\n\nCONTEXT:\n{context}\n\nANSWER:"

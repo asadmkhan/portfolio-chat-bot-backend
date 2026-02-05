@@ -43,7 +43,7 @@ class OpenAIProvider:
             "temperature": self._temperature,
             "stream": True,
         }
-        if self._response_format == "json":
+        if self._response_format == "json" and not create_kwargs.get("stream"):
             create_kwargs["response_format"] = {"type": "json_object"}
 
         stream = await self._client.chat.completions.create(**create_kwargs)
