@@ -12,6 +12,7 @@ from app.rag.retriever import FaissRetriever
 from app.rag.prompt import build_rag_messages
 
 from app.ai.factory import get_ai_client
+from app.analytics.db import log_chat_event
 
 logger = logging.getLogger("app.chat")
 _conversations: dict[str, list[dict[str, str]]] = {}
@@ -56,6 +57,7 @@ async def stream_chat(
     use_mmr: bool | None = None,
     fetch_k: int | None = None,
     mmr_lambda: float | None = None,
+    message_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     started_at = time.perf_counter()
     try:
@@ -129,6 +131,21 @@ async def stream_chat(
 
         yield sse(events.DONE, "[DONE]")
         _append_history(conversation_id, "assistant", _strip_json_block(assistant_text))
+        log_chat_event(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            language=lang,
+            question=user_message,
+            response=_strip_json_block(assistant_text),
+            k=top_k,
+            use_mmr=resolved_use_mmr,
+            fetch_k=resolved_fetch_k,
+            mmr_lambda=resolved_mmr_lambda,
+            sources=[
+                {"id": c.get("id"), "source": c.get("source"), "score": c.get("score")}
+                for c in chunks
+            ],
+        )
 
     except Exception as ex:
         logger.exception(

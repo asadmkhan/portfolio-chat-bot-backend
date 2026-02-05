@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.rag.ingest import build_faiss_index
 from app.rag.retriever import FaissRetriever
+from app.analytics.db import init_db
 
 
 @asynccontextmanager
@@ -17,4 +18,5 @@ async def lifespan(app):
         build_faiss_index(lang="de")
 
     FaissRetriever.warmup(["en", "de"])
+    init_db()
     yield

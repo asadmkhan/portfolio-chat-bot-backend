@@ -20,6 +20,14 @@ class ChatRequest(BaseModel):
     use_mmr: bool | None = None
     fetch_k: int | None = Field(default=None, ge=1, le=50)
     mmr_lambda: float | None = Field(default=None, ge=0.0, le=1.0)
+    message_id: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    conversation_id: str | None = None
+    message_id: str | None = None
+    rating: str = Field(pattern="^(up|down)$")
+    comment: str | None = None
 
 
 @router.post("/chat/stream")
@@ -42,6 +50,7 @@ async def chat_stream(
         use_mmr=payload.use_mmr,
         fetch_k=payload.fetch_k,
         mmr_lambda=payload.mmr_lambda,
+        message_id=payload.message_id,
     )
 
     return StreamingResponse(
@@ -53,3 +62,20 @@ async def chat_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/chat/feedback")
+async def chat_feedback(
+    payload: FeedbackRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    check_api_key(x_api_key, None)
+    from app.analytics.db import log_feedback
+
+    log_feedback(
+        conversation_id=payload.conversation_id,
+        message_id=payload.message_id,
+        rating=payload.rating,
+        comment=payload.comment,
+    )
+    return {"status": "ok"}
