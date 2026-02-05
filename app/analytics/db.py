@@ -124,3 +124,88 @@ def log_feedback(
             ),
         )
         conn.commit()
+
+
+def _row_to_dict(cursor: sqlite3.Cursor, row: tuple) -> dict[str, Any]:
+    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+
+
+def get_summary() -> dict[str, Any]:
+    if not settings.analytics_enabled:
+        return {"enabled": False}
+    db_path = _get_db_path()
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute("SELECT COUNT(*) AS total FROM analytics_events")
+        total = cur.fetchone()[0]
+        cur = conn.execute(
+            """
+            SELECT COUNT(*) AS total_7d
+            FROM analytics_events
+            WHERE created_at >= datetime('now', '-7 days')
+            """
+        )
+        total_7d = cur.fetchone()[0]
+        cur = conn.execute("SELECT COUNT(*) AS feedback_total FROM feedback")
+        feedback_total = cur.fetchone()[0]
+    return {
+        "enabled": True,
+        "total": total,
+        "total_7d": total_7d,
+        "feedback_total": feedback_total,
+    }
+
+
+def get_latest(limit: int = 20) -> list[dict[str, Any]]:
+    if not settings.analytics_enabled:
+        return []
+    db_path = _get_db_path()
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT created_at, conversation_id, message_id, language, question, response
+            FROM analytics_events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [_row_to_dict(cur, row) for row in rows]
+
+
+def get_top_questions(limit: int = 10) -> list[dict[str, Any]]:
+    if not settings.analytics_enabled:
+        return []
+    db_path = _get_db_path()
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT question, COUNT(*) as count
+            FROM analytics_events
+            WHERE question IS NOT NULL AND question != ''
+            GROUP BY question
+            ORDER BY count DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [_row_to_dict(cur, row) for row in rows]
+
+
+def get_feedback(limit: int = 20) -> list[dict[str, Any]]:
+    if not settings.analytics_enabled:
+        return []
+    db_path = _get_db_path()
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT created_at, conversation_id, message_id, rating, comment
+            FROM feedback
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [_row_to_dict(cur, row) for row in rows]
