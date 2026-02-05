@@ -6,10 +6,10 @@ def build_context(chunks, max_chars_per_chunk=900):
     lines = []
     for i, c in enumerate(chunks, start=1):
         src = c.get("source", "unknown")
-        text = (c.get("text") or "").strip()
-        if len(text) > max_chars_per_chunk:
-            text = text[:max_chars_per_chunk] + "…"
-        lines.append(f"[{i}] source: {src}\n{text}\n")
+        chunk_text = (c.get("text") or "").strip()
+        if len(chunk_text) > max_chars_per_chunk:
+            chunk_text = chunk_text[:max_chars_per_chunk] + "..."
+        lines.append(f"[{i}] source: {src}\n{chunk_text}\n")
     return "\n".join(lines).strip()
 
 
@@ -26,19 +26,26 @@ def build_rag_messages(
 
     if lang == "de":
         system = (
-            "Du bist ein Portfolio‑Assistent für Asad Khan. "
+            "Du bist ein Portfolio-Assistent fuer Asad Khan. "
             "Antworte nur mit Informationen aus dem bereitgestellten Kontext. "
             "Wenn etwas nicht im Kontext steht, sag ehrlich: 'Das steht nicht in meinen Unterlagen.' "
+            "Antworte NUR mit gueltigem JSON, ohne Markdown oder zusaetzlichen Text. "
+            "Verwende dieses Schema: "
+            "{\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
+            "Wenn etwas fehlt, setze es auf leere Liste oder leeren String."
         )
-        user = f"FRAGE:\n{user_question}\n\n" f"KONTEXT:\n{context}\n\n" "ANTWORT:"
+        user = f"FRAGE:\n{user_question}\n\nKONTEXT:\n{context}\n\nANTWORT:"
     else:
         system = (
             "You are a portfolio assistant for Asad Khan. "
             "Answer only using the provided context. "
             "If the answer is not in the context, say: 'I don't have that in my documents.' "
-            "Use short paragraphs and normal spacing."
+            "Respond ONLY with valid JSON, no Markdown or extra text. "
+            "Use this schema: "
+            "{\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
+            "If something is missing, use empty list or empty string."
         )
-        user = f"QUESTION:\n{user_question}\n\n" f"CONTEXT:\n{context}\n\n" "ANSWER:"
+        user = f"QUESTION:\n{user_question}\n\nCONTEXT:\n{context}\n\nANSWER:"
 
     return [
         ChatMessage(role="system", content=system),

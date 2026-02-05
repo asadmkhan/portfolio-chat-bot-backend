@@ -20,6 +20,7 @@ class OpenAIProvider:
     ):
         self._model = model
         self._temperature = temperature
+        self._response_format = (os.getenv("OPENAI_RESPONSE_FORMAT") or "").strip().lower()
         key = (api_key or os.getenv("OPENAI_API_KEY") or "").strip()
         if not key:
             raise RuntimeError("OPENAI_API_KEY is missing")
@@ -36,12 +37,16 @@ class OpenAIProvider:
     ) -> AsyncGenerator[str, None]:
         payload = [{"role": m.role, "content": m.content} for m in messages]
 
-        stream = await self._client.chat.completions.create(
-            model=self._model,
-            messages=payload,
-            temperature=self._temperature,
-            stream=True,
-        )
+        create_kwargs = {
+            "model": self._model,
+            "messages": payload,
+            "temperature": self._temperature,
+            "stream": True,
+        }
+        if self._response_format == "json":
+            create_kwargs["response_format"] = {"type": "json_object"}
+
+        stream = await self._client.chat.completions.create(**create_kwargs)
 
         async for chunk in stream:
             try:
