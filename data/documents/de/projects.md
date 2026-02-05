@@ -1,276 +1,298 @@
-# Projekte — Asad Mateen Khan
+# Projekte — Asad Mateen Khan (Portfolio Wissensbasis)
+
+Dieses Dokument listet die wichtigsten Projekte meiner beruflichen Laufbahn auf und ist gezielt
+für präzise RAG-Abfragen strukturiert.  
+Es verknüpft **Projekte mit Technologien**, sodass Fragen wie  
+„In welchen Projekten wurde C# verwendet?“ oder  
+„Wo hast du mit Node.js oder KI gearbeitet?“ korrekt beantwortet werden können.
+
+---
+
+## Schnelle Zuordnung: Technologie → Projekte
+
+### C# / .NET / ASP.NET / Web API (13+ Jahre)
+- B1WEB — SAP Business One Web Client (Init Consulting)
+- Newsletter-Automatisierung & Abmeldeverarbeitung
+- Microsoft 365 / Outlook Integration
+- Lead-Generierung & E-Mail-Parsing Pipeline
+- Chart Studio Backend & Datendienste
+- Monitoring- & Analytics-Systeme
+- Dokumentenmanagementsysteme
+- Desktop-Anwendungen (WinForms)
+
+### Angular / TypeScript / JavaScript / HTML / CSS (13+ Jahre)
+- B1WEB Benutzeroberfläche
+- Chart Studio
+- Analytics-Dashboards
+- iLearn LMS
+- HR- und CRM-Module
+- Enterprise-Portale und Dashboards
+
+### React / Redux (10+ Jahre)
+- HotOven — Bestellsystem
+- UI-Modernisierungen und Dashboards
+
+### Vue.js (5+ Jahre)
+- SharePoint-Portal-Erweiterungen
+- Web-Komponenten und Content-Module
+
+### Node.js (7+ Jahre)
+- HotOven Backend APIs
+- Automatisierungs-Tools und Integrationen
+- Interne Service-Utilities
 
-Dieser Abschnitt hebt eine Auswahl von Projekten hervor, die ich in verschiedenen Unternehmen und mit unterschiedlichen Technologien umgesetzt habe. Zu jedem Projekt beschreibe ich kurz den Zweck, meinen Beitrag und den erzielten Mehrwert.
+### Python (5+ Jahre)
+- Portfolio KI-Chatbot (RAG)
+- Automatisierungs- und Analyse-Skripte
 
-## SAP B1 Web Client (Init Consulting)
+### SQL Server / SQL (13+ Jahre)
+- B1WEB Datenverarbeitung & Reporting
+- HR / CRM / LMS-Systeme
+- Monitoring- und Analyse-Pipelines
+- Desktop-Anwendungen
 
-**Zweck:** Mandantenfähiger Webclient für SAP Business One, der Legacy‑Desktop‑Workflows für mehr als 50 Unternehmen ersetzt.
+### MongoDB (7+ Jahre)
+- Chart Studio Konfigurationen
+- Job-Logs & Verarbeitungsstatus
+- Benutzer- und Admin-Einstellungen
 
-**Highlights:**
+### Azure (8+ Jahre)
+- Cloud-Hosting, Deployments, CI/CD, Monitoring
 
-- Entwickelt mit Angular und .NET 8/9 in einer modularen Architektur mit Sales Funnel, Analytics, Chart Studio und einem KI‑Assistenten.
-- Integration über den SAP Service Layer und HANA, inklusive Mandantenfähigkeit und Persistenz in MongoDB.
-- Optimierung der Datenflüsse und Caching, wodurch die Verarbeitungszeit um 60 % reduziert wurde.
-- Bereitgestellt über containerisierte Infrastruktur mit automatisierten CI/CD‑Pipelines.
+### Docker / Kubernetes / CI/CD (5+ Jahre)
+- Containerisierte Services
+- Automatisierte Deployments & Releases
 
-**Technologien:** Angular, .NET 8/9 (C#), SAP Service Layer, MongoDB, Redis, Docker
+### Selenium Automatisierung (10+ Jahre)
+- 30+ Automatisierungs- und Test-Tools
 
-## Web Client Installer (Init Consulting)
+### KI / RAG / LLM (5+ Jahre)
+- Enterprise KI-Assistent
+- Portfolio RAG-Chatbot
 
-**Zweck:** Desktop‑Dienstprogramm zur Bereitstellung und Konfiguration von Web‑Client‑Anwendungen auf lokalen Servern.
+---
 
-**Highlights:**
+# Init Consulting AG (Deutschland)
 
-- Erleichtert die Einführung des SAP B1 Web Client, indem Umgebungskonfiguration und Datenbankbereitstellung gebündelt werden.
-- Bietet eine benutzerfreundliche Oberfläche für Administratoren und automatisiert das Patch‑Management.
+## 1) B1WEB — SAP Business One Web Client (Multi-Tenant)
+**Typ:** Enterprise-Plattform (Web-Client als Ersatz für SAP Desktop)  
+**Technologien:** C#/.NET, ASP.NET Core, Web API, Angular, SAP Business One Service Layer, SQL Server, SAP HANA, MongoDB, Redis, Docker, Kubernetes, Azure DevOps  
 
-**Technologien:** C#, Windows Forms, .NET, SQL Server
+**Beschreibung:**
+- Entwicklung eines mandantenfähigen SAP Business One Web-Clients für **50+ Unternehmen**.
+- Implementierung zentraler Geschäftsprozesse (Sales, CRM, Dokumentenmanagement).
+- Integration von SAP Business One über den **SAP Service Layer** mit stabiler Session- und Fehlerbehandlung.
+- Performance-Optimierung durch Caching und Reduzierung teurer SAP-Aufrufe.
+- CI/CD-Pipelines, Containerisierung und produktiver Betrieb.
 
-## KI‑Chatbot (Init Consulting)
+---
 
-**Zweck:** KI‑gestützter Assistent mit modularer Rechenpipeline (MCP) und Retrieval‑Augmented Generation (RAG) über SAP‑Metadaten.
+## 2) Sales Funnel / Lead-Management Modul
+**Typ:** Geschäftsmodul innerhalb von B1WEB  
+**Technologien:** Angular, TypeScript, C#/.NET, MongoDB, SQL Server, SAP Service Layer  
 
-**Highlights:**
+**Beschreibung:**
+- Aufbau kompletter Lead- und Sales-Funnel-Workflows.
+- Backend- und Frontend-Implementierung zur Nachverfolgung von Leads und Konversionen.
 
-- Implementiert ein FastAPI‑Backend mit FAISS‑Vektorsuche und ein React‑Widget für Echtzeit‑Streaming‑Antworten.
-- Unterstützt mehrsprachige Anfragen und streamt Zitate zusammen mit den Antworten.
-- Zeigt, wie generative KI Unternehmenssoftware verbessern kann, indem kontextbezogene Antworten aus internen Daten bereitgestellt werden.
+---
 
-**Technologien:** Python, FastAPI, FAISS, RAG, OpenAI/GPT, React
+## 3) Chart Studio — Self-Service Analytics (Power-BI-ähnlich)
+**Typ:** Analytics- und Reporting-Modul  
+**Technologien:** Angular, TypeScript, Material UI, MongoDB, C#/.NET APIs, SQL Server  
 
-## Chart Studio (Init Consulting)
+**Beschreibung:**
+- Entwicklung eines interaktiven Chart-Builders mit speicherbaren Konfigurationen.
+- Unterstützung von dynamischen Filtern, Dimensionen und Kennzahlen.
+- Anbindung mehrerer Datenquellen (SQL, SAP).
 
-**Zweck:** Power‑BI‑ähnliches benutzerdefiniertes Analyse‑Dashboard.
+---
 
-**Highlights:**
+## 4) Analytics-Dashboards (Enterprise Reporting)
+**Typ:** Management- und KPI-Dashboards  
+**Technologien:** Angular, TypeScript, SQL Server, Highcharts / D3-Konzepte  
 
-- Ermöglicht Geschäftsanwendern das Erstellen, Speichern und Wiederherstellen von Diagrammen mit dynamischen Filtern und persistierten Konfigurationen.
-- Unterstützt Datenquellen wie SQL, SAP‑Abfragen und JSON‑Dateien.
-- Verwendet MongoDB zur Persistenz und ein responsives Angular‑UI für interaktive Visualisierung.
+**Beschreibung:**
+- Umsetzung performanter Dashboards für operative und strategische Auswertungen.
+- Fokus auf Usability, Filterbarkeit und Performance.
 
-**Technologien:** Angular, .NET Core (C#), Node.js, SQL Server, MongoDB
+---
 
-## iLearn LMS (Bukhatir Group)
+## 5) Microsoft 365 / Outlook Integration
+**Typ:** Enterprise-Integration  
+**Technologien:** C#/.NET, Microsoft Graph API, OAuth, Hintergrundjobs, MongoDB  
 
-**Zweck:** Lernmanagementsystem, das den manuellen Trainingsaufwand um 75 % reduziert.
+**Beschreibung:**
+- Synchronisation von Kalendern, E-Mails und Aktivitäten.
+- Benutzerkonfigurierbare Einstellungen und zuverlässige Hintergrundverarbeitung.
 
-**Highlights:**
+---
 
-- Mit Angular und .NET Core entwickelt; bietet Kursverwaltung, Quiz‑ und Berichtsfunktionen.
-- Integriert in unternehmensinterne HR‑Systeme für automatisierte Benutzerbereitstellung und Fortschrittsverfolgung.
-- Wird als skalierbare mandantenfähige Anwendung betrieben, die mehrere Geschäftsbereiche bedient.
+## 6) Newsletter-Automatisierung & Abmeldeverarbeitung
+**Typ:** Compliance- und Automatisierungssystem  
+**Technologien:** C#/.NET Worker Services, MongoDB, SAP Service Layer, Logging  
 
-**Technologien:** Angular, .NET Core (C#), Node.js, SQL Server, Material Design
+**Beschreibung:**
+- Sichere Verarbeitung von Newsletter-Abmeldungen vor Versand.
+- Status-Tracking (Pending → Processing → Completed / Failed).
+- Zentrale Admin-Konfiguration für SAP-Benutzer.
 
-## HotOven (Bukhatir Group)
+---
 
-**Zweck:** Bestellsystem, das mehr als 500 tägliche Bestellungen in fünf Schulen abwickelt.
+## 7) Lead-Generierung: E-Mail-Parsing & SAP-Dokumente
+**Typ:** Automatisierungs-Feature  
+**Technologien:** C#/.NET, MongoDB, SAP Service Layer, Microsoft Graph API  
 
-**Highlights:**
+**Beschreibung:**
+- Extraktion strukturierter Lead-Daten aus E-Mails.
+- Automatische Erstellung von Geschäftspartnern, Aktivitäten und Opportunities.
 
-- Entwickelt mit React und Node.js und bietet ein nahtloses Bestellerlebnis für Schüler und Mitarbeitende.
-- Umfasst Bestellplanung, Zahlungsabwicklung und Echtzeit‑Dashboards für die Küche.
+---
 
-**Technologien:** React, Node.js, SQL Server, REST API
+## 8) KI-Assistent / Natural Language Search (Enterprise)
+**Typ:** KI-Feature innerhalb von B1WEB  
+**Technologien:** RAG, Embeddings, Prompt Engineering, Python (FastAPI), Tool-Orchestrierung  
 
-## LinkHR (Bukhatir Group)
+**Beschreibung:**
+- Entwicklung eines KI-Assistenten mit dokumentbasierter Antwortlogik.
+- Reduktion von Halluzinationen durch Retrieval-basierte Antworten.
 
-**Zweck:** HR‑Management‑System für über 5 000 Mitarbeitende.
+---
 
-**Highlights:**
+# Persönliche Projekte
 
-- Automatisiert Gehaltsabrechnung, Anwesenheits‑ und Urlaubsverwaltung, wodurch der administrative Aufwand sinkt.
-- Bietet Self‑Service‑Portale für Mitarbeitende mit Anbindung an externe Gehaltsanbieter.
+## 9) Portfolio KI-Chatbot (codedbyasad.com)
+**Typ:** Öffentlicher Portfolio-Assistent  
+**Technologien:** Python, FastAPI, SSE-Streaming, FAISS, OpenAI, React / Next.js  
 
-**Technologien:** ReactJS, .NET (C#), Node.js, SQL Server, REST API
+**Beschreibung:**
+- Echtzeit-Streaming-Chatbot mit ChatGPT-ähnlicher UX.
+- RAG-Pipeline auf Markdown-Dokumenten (CV, Projekte).
+- Mehrsprachig (Deutsch / Englisch), Deployment auf Railway & Vercel.
 
-## Touchwood CRM (Bukhatir Group)
+---
 
-**Zweck:** CRM‑System für ein Möbelunternehmen.
+# Bukhatir Group (VAE)
 
-**Highlights:**
+## 10) iLearn — Learning Management System
+**Typ:** Enterprise LMS  
+**Technologien:** Angular, TypeScript, C#/.NET Core, SQL Server  
 
-- Optimiert Lead‑Tracking, Opportunity‑Management und Verkaufsberichte.
-- Mit ASP.NET entwickelt und in Legacy‑ERP‑Systeme integriert.
+**Beschreibung:**
+- Kursverwaltung, Fortschritts-Tracking und Reporting.
+- Reduzierung manueller Schulungsprozesse.
 
-**Technologien:** ASP.NET (C#), SQL Server, HTML, CSS
+---
 
-## Monitor+ (PolyVista)
+## 11) HotOven — Kantinen-Bestellsystem
+**Typ:** Bestellsystem (500+ Bestellungen täglich)  
+**Technologien:** React, Node.js, REST APIs, SQL Server  
 
-**Zweck:** Überwachungs‑ und Analyseplattform für Business‑Intelligence.
+**Beschreibung:**
+- Entwicklung von Frontend und Backend für tägliche Bestellprozesse.
+- Hohe Stabilität bei Spitzenlasten.
 
-**Highlights:**
+---
 
-- Sammelt und analysiert Kennzahlen über Systeme hinweg und präsentiert Dashboards für Führungskräfte und technische Teams.
-- Beinhaltet Benachrichtigung, Trend‑ und Anomalieerkennung.
+## 12) LinkHR — HR-Plattform
+**Typ:** Enterprise HR-System  
+**Technologien:** C#/.NET Core, SQL Server, Angular/React UI-Module  
 
-**Technologien:** .NET (C#), SQL Server, HTML, CSS
+**Beschreibung:**
+- Module für Payroll, Recruiting, Anwesenheit und Mitarbeiterverwaltung.
+- Einsatz bei **5.000+ Mitarbeitern**.
 
-## Alerts+ (PolyVista)
+---
 
-**Zweck:** Echtzeit‑Benachrichtigungssystem mit anpassbaren Regeln.
+## 13) Touchwood CRM
+**Typ:** CRM-System  
+**Technologien:** ASP.NET, C#, SQL Server, Bootstrap  
 
-**Highlights:**
+**Beschreibung:**
+- Umsetzung von Vertriebs- und Lead-Workflows.
+- Reporting und responsive Benutzeroberflächen.
 
-- Ermöglicht Stakeholdern die Definition von Schwellenwerten und Benachrichtigungskanälen für Geschäftsereignisse.
-- Integriert sich in E‑Mail, SMS und Slack für Multi‑Channel‑Alerts.
+---
 
-**Technologien:** .NET (C#), SQL Server, REST API
+# PolyVista Inc (Pakistan)
 
-## Metrics+ (PolyVista)
+## 14) Monitoring- & Analytics-Suite (Monitor+, Alerts+, Metrics+)
+**Typ:** BI- & Monitoring-Plattform  
+**Technologien:** C#, ASP.NET MVC, SQL Server, D3.js, Highcharts  
 
-**Zweck:** Dashboard zur Verfolgung und Visualisierung von Geschäftskennzahlen.
+**Beschreibung:**
+- KPI-Dashboards, Alarmierungsregeln und Visualisierungen.
+- Verbesserte Transparenz und Frühwarnsysteme.
 
-**Highlights:**
+---
 
-- Bietet KPI‑Dashboards mit Drill‑Down‑Funktionen und historischen Vergleichen.
-- Ermöglicht Teams das Erstellen und Teilen von Berichten.
+## 15) React / Redux UI-Modernisierung
+**Typ:** UI-Refactoring  
+**Technologien:** React, Redux, JavaScript  
 
-**Technologien:** .NET (C#), SQL Server, Highcharts, HTML
+**Beschreibung:**
+- Modernisierung komplexer Benutzeroberflächen.
+- Performance- und Wartbarkeitsverbesserungen.
 
-## Risk+ (PolyVista)
+---
 
-**Zweck:** Risikoanalyse‑ und Management‑Anwendung für Finanzanalysen.
+## 16) Selenium-Automatisierung (30+ Tools)
+**Typ:** Automatisierungs-Suite  
+**Technologien:** Selenium, C#, JavaScript  
 
-**Highlights:**
+**Beschreibung:**
+- Automatisierung von Tests, Workflows und Datenextraktion.
+- Deutliche Reduktion manueller Tätigkeiten.
 
-- Unterstützt Finanzinstitutionen bei der Bewertung von Portfoliorisiken durch Szenario‑Analysen und Stresstests.
-- Ermöglicht das Reporting für regulatorische Anforderungen.
+---
 
-**Technologien:** .NET (C#), SQL Server, Finanzmodelle
+## 17) Web-Scraping & Datenextraktion
+**Typ:** Automatisierungs-Pipelines  
+**Technologien:** Selenium, Python, C#, Node.js  
 
-## Product Comparer (PolyVista)
+**Beschreibung:**
+- Robuste Extraktion und Transformation externer Datenquellen.
+- Fehlertolerante Verarbeitung bei Strukturänderungen.
 
-**Zweck:** E‑Commerce‑Produktvergleichstool mit Preisverfolgung.
+---
 
-**Highlights:**
+# SSA Soft (Pakistan)
 
-- Aggregiert Produktdaten von mehreren Händlern und bietet Vergleiche, Preisverläufe und Benachrichtigungen.
-- Implementiert Scraping‑ und Caching‑Mechanismen, um stets aktuelle Informationen zu liefern.
+## 18) Dokumentenmanagementsystem
+**Typ:** Web-Anwendung  
+**Technologien:** ASP.NET Web Forms, C#, SQL Server  
 
-**Technologien:** .NET (C#), Node.js, REST‑APIs, SQL Server
+**Beschreibung:**
+- Dokumentenerfassung, Verwaltung und Audit-Workflows.
+- Einsatz in produktiven Unternehmensumgebungen.
 
-## Google Trends App (PolyVista)
+---
 
-**Zweck:** Analyse‑Tool, das Google‑Trends‑Daten für Marktinformationen integriert.
+## 19) SharePoint-Portal-Anpassungen
+**Typ:** Portal-Erweiterungen  
+**Technologien:** SharePoint, JavaScript, jQuery, Vue.js  
 
-**Highlights:**
+**Beschreibung:**
+- Entwicklung individueller Web-Parts und Workflows.
+- Erweiterung bestehender SharePoint-Portale.
 
-- Ermöglicht es Marketeers, die Suchpopularität von Stichwörtern über die Zeit zu verfolgen und geografische Interessen zu vergleichen.
-- Bietet exportierbare Berichte und interaktive Diagramme.
+---
 
-**Technologien:** .NET (C#), Node.js, Python, Google API, SQL Server
+# TriSoft Technology (Pakistan)
 
-## EDocs (Frühere Projekte)
+## 20) Desktop-Anwendungen & Reporting
+**Typ:** WinForms-Anwendungen  
+**Technologien:** C#, WinForms, SQL Server  
 
-**Zweck:** Dokumentenscann‑ und Verwaltungssystem.
+**Beschreibung:**
+- Entwicklung interner Desktop-Tools und Reporting-Lösungen.
+- Wartbare Anwendungen für operative Teams.
 
-**Highlights:**
+---
 
-- Bietet OCR, Indexierung und sichere Speicherung von Papierdokumenten.
-- Enthält rollenbasierte Zugriffskontrolle und Prüfprotokolle.
+## Hinweise für präzise KI-Antworten
 
-**Technologien:** WinForms, C#, SQL Server
-
-## Video Logics (Frühere Projekte)
-
-**Zweck:** Anwendung für Spracherkennung und Transkription von Videoinhalten.
-
-**Highlights:**
-
-- Nutzt Speech‑to‑Text‑APIs zur Transkription von Videos und erzeugt durchsuchbare Transkripte.
-- Integriert sich in Video‑Hosting‑Plattformen für die automatische Verarbeitung.
-
-**Technologien:** .NET (C#), SQL Server, Speech‑to‑Text API
-
-## LMS Portal (Frühere Projekte)
-
-**Zweck:** Lernmanagementsystem für Bildungseinrichtungen.
-
-**Highlights:**
-
-- Bietet Kursanlage, Studentenimmatrikulation und Bewertungsfunktionen.
-- Entworfen für den Einsatz in mehreren Schulen mit zentraler Verwaltung.
-
-**Technologien:** .NET (C#), Vue.js, SQL Server, ASP.NET
-
-## Omnia CMS (Frühere Projekte)
-
-**Zweck:** SharePoint‑basiertes Portal und Content‑Management‑System.
-
-**Highlights:**
-
-- Erweitert SharePoint mit benutzerdefinierten Webparts, Workflows und Branding.
-- Ermöglicht nichttechnischen Anwendern, Inhalte einfach zu verwalten.
-
-**Technologien:** SharePoint, Vue.js, HTML, CSS, JavaScript
-
-## Zoom (PolyVista)
-
-**Zweck:** Tool für Web‑Scraping und Sentiment‑Analyse.
-
-**Highlights:**
-
-- Automatisiert die Datenextraktion von verschiedenen Websites und führt Sentiment‑Analysen durch, um verwertbare Erkenntnisse zu gewinnen.
-
-**Technologien:** .NET (C#), Selenium, Python, SQL Server
-
-## SSTA (PolyVista)
-
-**Zweck:** Textanalyse‑ und intelligentes PDF‑Generierungs‑Tool.
-
-**Highlights:**
-
-- Analysiert Textdaten und generiert strukturierte PDF‑Berichte für interne Stakeholder.
-
-**Technologien:** .NET (C#), Python, SQL Server, PDF‑Generierungsbibliotheken
-
-## SSDS (PolyVista)
-
-**Zweck:** Lösung für Daten‑Scraping und Extraktion.
-
-**Highlights:**
-
-- Entwickelt robuste Web‑Scraping‑Pipelines, um Daten aus verschiedenen Quellen zu sammeln und zu normalisieren.
-
-**Technologien:** .NET (C#), Node.js, SQL Server, Web Scraping
-
-## Care Connect (PolyVista)
-
-**Zweck:** Anwendung für Requisitionsmanagement und interne Workflows.
-
-**Highlights:**
-
-- Strafft interne Requisitionsprozesse mit Genehmigungsworkflows und Audit‑Trails.
-
-**Technologien:** .NET (C#), SharePoint, SQL Server
-
-## DCI (Deloitte) (PolyVista)
-
-**Zweck:** Dashboards zur Risikokontrolle für Finanzanalysen.
-
-**Highlights:**
-
-- Liefert interaktive Dashboards, die Auditoren bei der Visualisierung und Steuerung von Risikokennzahlen unterstützen.
-
-**Technologien:** .NET (C#), SQL Server, Dashboard‑Frameworks
-
-## TWEIP (Frühere Projekte)
-
-**Zweck:** Tracking‑System für USAID‑Brunnen.
-
-**Highlights:**
-
-- Überwacht und berichtet über den Betrieb von Brunnen an verteilten Standorten für Nachhaltigkeitsprogramme.
-
-**Technologien:** .NET (C#), WinForms, SQL Server
-
-## PDIP / PQM (Frühere Projekte)
-
-**Zweck:** Werkzeuge zur Überwachung der Stromqualität und zur Leistungsqualitätsmessung.
-
-**Highlights:**
-
-- Entwickelt Desktop‑Tools zur Überwachung der Stromqualität und der Lastfaktoren für industrielle Kunden.
-
-**Technologien:** .NET (C#), SQL Server, WinForms
+- **C#-Projekte:** B1WEB, Newsletter-Automatisierung, Lead-Generierung, Monitoring-Systeme, Desktop-Tools
+- **Node.js-Projekte:** HotOven, Automatisierungs-Services
+- **Vue.js-Projekte:** SharePoint-Portale, UI-Module
+- **KI-Projekte:** Enterprise KI-Assistent, Portfolio RAG-Chatbot
