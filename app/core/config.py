@@ -47,6 +47,18 @@ class Settings:
     min_chunk_score: float
     contact_email: str
     contact_linkedin: str
+    google_calendar_id: str
+    google_calendar_timezone: str
+    google_service_account_json: str | None
+    google_service_account_file: str | None
+    google_impersonate_user: str | None
+    smtp_host: str | None
+    smtp_port: int
+    smtp_user: str | None
+    smtp_password: str | None
+    smtp_from: str | None
+    smtp_use_tls: bool
+    admin_notify_email: str | None
 
 
 settings = Settings(
@@ -64,4 +76,16 @@ settings = Settings(
     min_chunk_score=float(_get_env("MIN_CHUNK_SCORE", "0.25") or "0.25"),
     contact_email=_get_env("CONTACT_EMAIL", "contact@codedbyasad.com") or "contact@codedbyasad.com",
     contact_linkedin=_get_env("CONTACT_LINKEDIN", "https://www.linkedin.com/in/asadmkhan") or "https://www.linkedin.com/in/asadmkhan",
+    google_calendar_id=_get_env("GOOGLE_CALENDAR_ID", "") or "",
+    google_calendar_timezone=_get_env("GOOGLE_CALENDAR_TIMEZONE", "Europe/Berlin") or "Europe/Berlin",
+    google_service_account_json=_get_env("GOOGLE_SERVICE_ACCOUNT_JSON"),
+    google_service_account_file=_get_env("GOOGLE_SERVICE_ACCOUNT_FILE"),
+    google_impersonate_user=_get_env("GOOGLE_IMPERSONATE_USER"),
+    smtp_host=_get_env("SMTP_HOST"),
+    smtp_port=_get_env_int("SMTP_PORT", 587),
+    smtp_user=_get_env("SMTP_USER"),
+    smtp_password=_get_env("SMTP_PASSWORD"),
+    smtp_from=_get_env("SMTP_FROM"),
+    smtp_use_tls=_get_env_bool("SMTP_USE_TLS", True),
+    admin_notify_email=_get_env("ADMIN_NOTIFY_EMAIL"),
 )

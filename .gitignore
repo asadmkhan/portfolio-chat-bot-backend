@@ -7,5 +7,6 @@ data/faiss/
 data/documents/**/generated/
 data/analytics.db
 *.log
+secrets/
 
 .DS_Store
