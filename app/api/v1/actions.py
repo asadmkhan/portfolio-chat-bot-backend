@@ -53,10 +53,13 @@ def book_calendar(payload: CalendarBookingRequest, _: None = Depends(_auth)):
     if result.get("status") == "busy":
         raise HTTPException(status_code=409, detail="Selected time is not available.")
     try:
-        send_admin_booking_notice(payload_data)
+        email_sent = send_admin_booking_notice(payload_data)
     except Exception as exc:  # noqa: BLE001 - do not block booking
         logger.exception("Admin booking email failed: %s", exc)
-    return result
+        email_sent = False
+    response = dict(result)
+    response["email_sent"] = email_sent
+    return response
 
 
 @router.post("/actions/calendar/availability")
