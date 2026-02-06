@@ -38,12 +38,9 @@ def _needs_render(text: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch website text into a markdown file.")
-    parser.add_argument("--url", default="https://www.codedbyasad.com", help="Website URL")
-    parser.add_argument(
-        "--out",
-        default="data/documents/en/site.md",
-        help="Output markdown path",
-    )
+    parser.add_argument("--url", default=None, help="Website URL")
+    parser.add_argument("--lang", default="en", help="Language code (en, de)")
+    parser.add_argument("--out", default=None, help="Output markdown path")
     parser.add_argument(
         "--render",
         action="store_true",
@@ -52,13 +49,21 @@ def main() -> None:
     args = parser.parse_args()
 
     html = ""
+    url = args.url
+    if not url:
+        url = "https://www.codedbyasad.com"
+        if args.lang.lower() == "de":
+            url = "https://www.codedbyasad.com/de"
+
+    out_path = Path(args.out) if args.out else Path(f"data/documents/{args.lang}/site.md")
+
     if httpx is not None:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.get(args.url, follow_redirects=True)
+            resp = client.get(url, follow_redirects=True)
             resp.raise_for_status()
             html = resp.text
     else:
-        with urllib.request.urlopen(args.url, timeout=30) as response:
+        with urllib.request.urlopen(url, timeout=30) as response:
             html = response.read().decode("utf-8", errors="ignore")
 
     text = _strip_html(html)
@@ -74,14 +79,13 @@ def main() -> None:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto(args.url, wait_until="networkidle", timeout=30_000)
+            page.goto(url, wait_until="networkidle", timeout=30_000)
             html = page.content()
             browser.close()
         text = _strip_html(html)
 
-    out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(f"# Website Snapshot\n\nSource: {args.url}\n\n{text}\n", encoding="utf-8")
+    out_path.write_text(f"# Website Snapshot\n\nSource: {url}\n\n{text}\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

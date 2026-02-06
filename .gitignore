@@ -6,7 +6,6 @@ __pycache__/
 data/faiss/
 data/documents/**/generated/
 data/analytics.db
-data/documents/**/site.md
 *.log
 
 .DS_Store

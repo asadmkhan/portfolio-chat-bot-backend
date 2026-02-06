@@ -96,12 +96,29 @@ async def stream_chat(
         )
 
         resolved_include_citations = True if include_citations is None else include_citations
+        max_score = max((c.get("score", 0.0) or 0.0) for c in chunks) if chunks else 0.0
+        low_confidence = len(chunks) == 0 or max_score < settings.min_chunk_score
         if resolved_include_citations:
             sources = [
                 {"id": c.get("id"), "source": c.get("source"), "score": c.get("score")}
                 for c in chunks
             ]
             yield sse(events.SOURCES, json.dumps(sources))
+        if low_confidence:
+            yield sse(
+                events.CTA,
+                json.dumps(
+                    {
+                        "email": settings.contact_email,
+                        "linkedin": settings.contact_linkedin,
+                        "reason": "low_confidence",
+                        "message": (
+                            "I couldn't find this in my documents. "
+                            "Please reach out via email or LinkedIn and I’ll respond quickly."
+                        ),
+                    }
+                ),
+            )
 
         logger.info(
             json.dumps(
@@ -115,6 +132,7 @@ async def stream_chat(
                     "use_mmr": resolved_use_mmr,
                     "fetch_k": resolved_fetch_k,
                     "mmr_lambda": resolved_mmr_lambda,
+                    "max_score": max_score,
                     "message": user_message[: settings.log_message_max_chars],
                     "chunk_ids": [c.get("id") for c in chunks],
                 }

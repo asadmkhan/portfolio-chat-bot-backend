@@ -13,7 +13,8 @@ copy .env.example .env
 python -m scripts.ingest
 
 ## Optional: Website Snapshot Ingest
-python -m scripts.fetch_site --url https://www.codedbyasad.com --out data/documents/en/site.md
+python -m scripts.fetch_site --lang en --render
+python -m scripts.fetch_site --lang de --render
 python -m scripts.ingest
 
 ## Run
