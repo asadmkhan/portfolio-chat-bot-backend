@@ -60,19 +60,51 @@ DevOps und RAG-basierten KI-Lösungen**.
 
 ## Berufserfahrung
 
-### Init Consulting AG — Deutschland  
-**Senior Software Engineer / Full-Stack Developer**  
-*Februar 2020 – Heute*
+### Init Consulting AG - Deutschland  
+**Senior Full-Stack Developer | AI Lead**  
+*Feb 2020 - Heute*
 
-- Architektur und Entwicklung von **B1WEB**, einem mandantenfähigen
-  SAP Business One Web-Client für **50+ Unternehmen**.
-- Backend-Services mit **C#/.NET (ASP.NET Core, Web API)** und
-  **SAP Service Layer**.
-- Entwicklung komplexer Angular-Frontends (Sales, CRM, Analytics, Chart Studio).
-- Performance-Optimierung durch Caching, Background Jobs und saubere Architektur.
-- Integration von **Microsoft 365 / Outlook** über die Microsoft Graph API.
-- Design und Umsetzung von **KI-gestützten Chatbots und RAG-Suchfunktionen**.
-- Aufbau von CI/CD-Pipelines, Containerisierung und produktiver Betrieb.
+- Architektur & Delivery: End-to-End-Lieferung eines mandantenfaehigen SAP Business One Web Clients fuer 50+ Unternehmen geleitet; Angular-Frontend mit C#/ASP.NET Core-Services ueber SAP Service Layer auf SQL Server/SAP HANA kombiniert, um Sales/CRM-Desktopprozesse zu ersetzen.
+- Scope (Sales & CRM): Module fuer Angebot, Auftrag, Lieferung und A/R-Rechnung veroeffentlicht; Preis-, Steuer- und Lokalisierungsregeln, mehrsprachige UI und Crystal-Reports-Layouts fuer EU- und globale Compliance umgesetzt.
+- Plattform-Modernisierung: Legacy-Services von ASP.NET 4.6 auf .NET 9-Microservices migriert (Deploy-Zeit halbiert) und UI von Angular 7 auf aktuelle Versionen aktualisiert.
+- Analytics: Chart Studio und Dashboards mit Angular, TypeScript und Material UI gebaut; Self-Service-Visualisierung mit Konfigurationen in MongoDB.
+- Integrationen & Automatisierung: Microsoft 365/Outlook-Automatisierung via Graph API; Newsletter-Processing mit Quartz.NET + RabbitMQ und Sales-Funnel-Orchestrierung mit Hangfire + Azure Service Bus.
+- AI-Feature: AI-Assistant fuer Chatbot-Q&A und Natural-Language-Search ueber SAP-Metadaten; MCP-Client/Server und Python/FastAPI-RAG-Assistant entwickelt.
+- Performance & Security: Reaktionszeit um 35% verbessert durch Redis-Caching der SAP Service Layer-Antworten; Metadaten/Content-Suche mit Elasticsearch/OpenSearch.
+- Leadership & Release-Takt: Team von 8 gefuehrt, 3 Juniors gecoacht, Architektur/Code-Reviews geleitet und woechentliche Releases mit CI/CD und Monitoring (Azure DevOps, Docker/Kubernetes, Serilog, Application Insights) koordiniert.
+
+### Bukhatir Group - Vereinigte Arabische Emirate  
+**Senior Software Engineer | Full-Stack Lead**  
+*Apr 2018 - Jan 2020*
+
+- SaaS-Produktdelivery: Lieferung von 4 Enterprise-Applikationen fuer 20+ Business Units verantwortet - von Anforderungen/Schaetzung bis Release und Support.
+- iLearn (LMS): Self-Service-Lernfluss, Kurserstellung und Live-Fortschritt mit Angular und .NET Core umgesetzt; manuellen Trainingsaufwand reduziert.
+- HotOven: Kantinen-Bestellsystem fuer 500+ Bestellungen/Tag in 5 Schulen mit React + Node.js gebaut; Genauigkeit verbessert und Wartezeit um 50% reduziert.
+- LinkHR: HR-Plattform fuer 5.000+ Mitarbeitende entwickelt; Payroll, Recruiting und Attendance mit .NET Core und SQL Server automatisiert.
+- Touchwood CRM: Responsives CRM zur besseren Lead-Verfolgung und Vertriebssteuerung mit C#/.NET und Bootstrap.
+
+### PolyVista Inc - Pakistan  
+**Software Engineer | Full-Stack Developer**  
+*Jul 2013 - Apr 2018*
+
+- Multi-Product: 10+ Web- und Desktop-Apps geliefert, Performance verbessert und Delivery fuer 30+ internationale Kunden beschleunigt.
+- Monitor+: Kern-UI mit React/Redux und C#-Services refaktoriert; schnelleres Beschwerde-Triage und Kapazitaet von 10 auf 25+ Faelle/Tag erhoeht.
+- Alerts+ & Metrics+: Keyword-basiertes Echtzeit-Alerting (ASP.NET MVC) und D3.js-Dashboards fuer Monitoring und KPI-Visualisierung gebaut.
+- Data Tools: Automatisierte Textanalyse (PolyVista SSTA) und Web-Scraping-Loesung (SSDS) mit C# und jQuery entwickelt; manuelle Erfassung eliminiert.
+- Quality Engineering: 250+ kritische Produktionsprobleme behoben, mit Root-Cause-Fixes und Edge-Case-Haertung.
+
+### SSA Soft - Pakistan  
+**Software Engineer**  
+*Jan 2013 - Jul 2013*
+
+- EDocs & Video Logics: ASP.NET (Web Forms) DMS mit Scan-Funktionen und Speech-Transcription-Suche in C#/.NET entwickelt.
+- LMS & CMS: LMS um Gebuehren-Tracking erweitert und SharePoint-Portal-Features mit JavaScript/jQuery angepasst, um Admin-Aufwand zu reduzieren.
+
+### TriSoft Technology - Pakistan  
+**Junior Software Engineer**  
+*Aug 2012 - Jan 2013*
+
+- Operational Tracking: TWEIP, PDIP und PQM fuer Energie-Verteilungs-Monitoring geliefert; 4,9 Mio.+ Verbraucher unterstuetzt und 16 MW Einsparungen verfolgt (C# WinForms, SQL Server, Crystal Reports).
 
 ---
 
@@ -122,13 +154,13 @@ DevOps und RAG-basierten KI-Lösungen**.
 
 ## Zertifikate
 
-- **Programming in C# ? Microsoft** (Okt 2020)
+- **Programming in C# - Microsoft** (Okt 2020)
   - Credential ID: 16087471
 
 ## Kontakt
 
 - E-Mail: contact@codedbyasad.com
-- Telefon: Nicht ?ffentlich gelistet. Bitte per E-Mail oder LinkedIn anfragen.
+- Telefon: Nicht -ffentlich gelistet. Bitte per E-Mail oder LinkedIn anfragen.
 
 ## Sprachen
 
