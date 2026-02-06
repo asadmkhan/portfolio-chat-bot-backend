@@ -12,5 +12,9 @@ copy .env.example .env
 ## Ingest
 python -m scripts.ingest
 
+## Optional: Website Snapshot Ingest
+python -m scripts.fetch_site --url https://www.codedbyasad.com --out data/documents/en/site.md
+python -m scripts.ingest
+
 ## Run
 python -m uvicorn app.main:app --reload

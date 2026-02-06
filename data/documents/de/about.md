@@ -75,3 +75,11 @@ freiberufliche Projekte und Consulting-Mandate**.
 - Entwurf **nachhaltiger Architekturen**
 - Entwicklung von **KI-Features**, die produktiv einsetzbar sind
 - Ausgewogene Kombination aus **Geschwindigkeit, Qualität und Wartbarkeit**
+
+---
+
+## Kontakt
+
+- E-Mail: contact@codedbyasad.com
+- Telefon: Nicht ?ffentlich gelistet. Bitte per E-Mail oder LinkedIn anfragen.
+

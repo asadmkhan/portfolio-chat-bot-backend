@@ -119,6 +119,17 @@ DevOps und RAG-basierten KI-Lösungen**.
 
 ---
 
+
+## Zertifikate
+
+- **Programming in C# ? Microsoft** (Okt 2020)
+  - Credential ID: 16087471
+
+## Kontakt
+
+- E-Mail: contact@codedbyasad.com
+- Telefon: Nicht ?ffentlich gelistet. Bitte per E-Mail oder LinkedIn anfragen.
+
 ## Sprachen
 
 - Englisch — Fließend  

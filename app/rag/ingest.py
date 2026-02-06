@@ -82,6 +82,7 @@ def build_faiss_index(
     index.add(vectors)
 
     faiss.write_index(index, str(out_path / "index.faiss"))
+    np.save(out_path / "embeddings.npy", vectors)
 
     meta = {
         "lang": lang,
@@ -89,6 +90,7 @@ def build_faiss_index(
         "chunk_size": chunk_size,
         "overlap": overlap,
         "count": len(chunks),
+        "embeddings_path": "embeddings.npy",
         "chunks": [
             {"id": c.id, "source": c.source, "start": c.start, "end": c.end, "text": c.text}
             for c in chunks

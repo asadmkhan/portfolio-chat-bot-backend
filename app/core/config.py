@@ -54,8 +54,8 @@ settings = Settings(
     sentry_dsn=_get_env("SENTRY_DSN"),
     log_message_max_chars=_get_env_int("LOG_MESSAGE_MAX_CHARS", 800),
     mmr_use=_get_env_bool("MMR_USE", True),
-    mmr_fetch_k=_get_env_int("MMR_FETCH_K", 15),
-    mmr_lambda=float(_get_env("MMR_LAMBDA", "0.6") or "0.6"),
+    mmr_fetch_k=_get_env_int("MMR_FETCH_K", 10),
+    mmr_lambda=float(_get_env("MMR_LAMBDA", "0.7") or "0.7"),
     analytics_enabled=_get_env_bool("ANALYTICS_ENABLED", True),
     analytics_db_path=_get_env("ANALYTICS_DB_PATH", "data/analytics.db") or "data/analytics.db",
 )

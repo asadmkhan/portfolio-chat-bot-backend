@@ -61,3 +61,11 @@ I am currently based in **Bavaria, Germany**, and open to **senior full-time rol
 - Designing **clean architectures** that last for years
 - Shipping **AI features** that actually work in production
 - Balancing **speed, quality, and maintainability**
+
+---
+
+## Contact
+
+- Email: contact@codedbyasad.com
+- Phone: Not publicly listed. Please contact via email or LinkedIn for direct contact details.
+

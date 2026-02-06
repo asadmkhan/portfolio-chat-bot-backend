@@ -30,6 +30,7 @@ class FaissRetriever:
 
         self.meta_path = self.faiss_dir / "meta.json"
         self.index_path = self.faiss_dir / "index.faiss"
+        self.embeddings_path = self.faiss_dir / "embeddings.npy"
 
         meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
         self.model_name: str = meta["model_name"]
@@ -37,6 +38,9 @@ class FaissRetriever:
         self._model = self._get_model(self.model_name)
         self._index = faiss.read_index(str(self.index_path))
         self._chunks: list[dict[str, Any]] = meta["chunks"]
+        self._embeddings: np.ndarray | None = None
+        if self.embeddings_path.exists():
+            self._embeddings = np.load(self.embeddings_path, mmap_mode="r")
 
     @classmethod
     def get(cls, lang: str) -> "FaissRetriever":
@@ -122,6 +126,7 @@ class FaissRetriever:
             c = self._chunks[idx]
             results.append(
                 {
+                    "index": idx,
                     "id": c.get("id"),
                     "source": c.get("source"),
                     "text": c.get("text"),
@@ -132,11 +137,15 @@ class FaissRetriever:
         if not use_mmr or len(results) <= k:
             return results[:k]
 
-        doc_texts = [r.get("text", "") for r in results]
-        doc_embs = self._model.encode(
-            doc_texts, normalize_embeddings=True, show_progress_bar=False
-        )
-        doc_embs = np.asarray(doc_embs, dtype="float32")
+        if self._embeddings is not None:
+            doc_idxs = [r.get("index") for r in results]
+            doc_embs = np.asarray(self._embeddings[doc_idxs], dtype="float32")
+        else:
+            doc_texts = [r.get("text", "") for r in results]
+            doc_embs = self._model.encode(
+                doc_texts, normalize_embeddings=True, show_progress_bar=False
+            )
+            doc_embs = np.asarray(doc_embs, dtype="float32")
 
         selected_idxs = self._mmr_select(emb[0], doc_embs, k, mmr_lambda)
         reranked = [results[i] for i in selected_idxs]

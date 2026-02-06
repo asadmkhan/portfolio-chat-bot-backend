@@ -101,6 +101,17 @@ Senior Full-Stack Developer and AI Engineer with **13+ years of experience** del
 
 - **BSc Computer Science** — COMSATS Institute of Information Technology
 
+
+## Certifications
+
+- **Programming in C# ? Microsoft** (Oct 2020)
+  - Credential ID: 16087471
+
+## Contact
+
+- Email: contact@codedbyasad.com
+- Phone: Not publicly listed. Please contact via email or LinkedIn for direct contact details.
+
 ## Languages
 
 - English — Fluent  
