@@ -15,6 +15,31 @@ def _smtp_ready() -> bool:
     return bool(settings.smtp_host and settings.admin_notify_email)
 
 
+def _smtp_password() -> str | None:
+    if not settings.smtp_password:
+        return None
+    # Gmail app passwords are often copied with spaces every 4 chars.
+    return settings.smtp_password.replace(" ", "")
+
+
+def _smtp_login_if_needed(server: smtplib.SMTP) -> None:
+    if settings.smtp_user and _smtp_password():
+        server.login(settings.smtp_user, _smtp_password())
+
+
+def _send_via_smtp_with(host: str, port: int, use_tls: bool, msg: EmailMessage, context: ssl.SSLContext) -> None:
+    if use_tls:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.starttls(context=context)
+            _smtp_login_if_needed(server)
+            server.send_message(msg)
+        return
+
+    with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
+        _smtp_login_if_needed(server)
+        server.send_message(msg)
+
+
 def send_admin_booking_notice(payload: dict[str, Any]) -> bool:
     if not _smtp_ready():
         logger.info("Admin email notification is not configured; skipping.")
@@ -42,25 +67,53 @@ def send_admin_booking_notice(payload: dict[str, Any]) -> bool:
     msg.set_content(body)
 
     context = ssl.create_default_context()
+    primary_mode = "STARTTLS" if settings.smtp_use_tls else "SSL"
     try:
-        if settings.smtp_use_tls:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
-                server.starttls(context=context)
-                if settings.smtp_user and settings.smtp_password:
-                    server.login(settings.smtp_user, settings.smtp_password)
-                server.send_message(msg)
-        else:
-            if settings.smtp_port == 465:
-                with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context, timeout=15) as server:
-                    if settings.smtp_user and settings.smtp_password:
-                        server.login(settings.smtp_user, settings.smtp_password)
-                    server.send_message(msg)
-            else:
-                with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
-                    if settings.smtp_user and settings.smtp_password:
-                        server.login(settings.smtp_user, settings.smtp_password)
-                    server.send_message(msg)
+        _send_via_smtp_with(
+            host=settings.smtp_host or "",
+            port=settings.smtp_port,
+            use_tls=settings.smtp_use_tls,
+            msg=msg,
+            context=context,
+        )
         return True
     except Exception as exc:  # noqa: BLE001 - keep booking flow alive
-        logger.exception("Admin email notification failed: %s", exc)
+        logger.exception(
+            "Admin email via SMTP failed (host=%s port=%s mode=%s): %s",
+            settings.smtp_host,
+            settings.smtp_port,
+            primary_mode,
+            exc,
+        )
+
+    if not settings.smtp_fallback_ssl:
+        return False
+
+    fallback_host = settings.smtp_host or ""
+    fallback_port = 465 if settings.smtp_use_tls else 587
+    fallback_tls = not settings.smtp_use_tls
+    fallback_mode = "STARTTLS" if fallback_tls else "SSL"
+    try:
+        _send_via_smtp_with(
+            host=fallback_host,
+            port=fallback_port,
+            use_tls=fallback_tls,
+            msg=msg,
+            context=context,
+        )
+        logger.info(
+            "Admin email sent with SMTP fallback (host=%s port=%s mode=%s).",
+            fallback_host,
+            fallback_port,
+            fallback_mode,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - keep booking flow alive
+        logger.exception(
+            "Admin email SMTP fallback failed (host=%s port=%s mode=%s): %s",
+            fallback_host,
+            fallback_port,
+            fallback_mode,
+            exc,
+        )
         return False

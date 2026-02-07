@@ -58,6 +58,7 @@ class Settings:
     smtp_password: str | None
     smtp_from: str | None
     smtp_use_tls: bool
+    smtp_fallback_ssl: bool
     admin_notify_email: str | None
 
 
@@ -87,5 +88,6 @@ settings = Settings(
     smtp_password=_get_env("SMTP_PASSWORD"),
     smtp_from=_get_env("SMTP_FROM"),
     smtp_use_tls=_get_env_bool("SMTP_USE_TLS", True),
+    smtp_fallback_ssl=_get_env_bool("SMTP_FALLBACK_SSL", True),
     admin_notify_email=_get_env("ADMIN_NOTIFY_EMAIL"),
 )
