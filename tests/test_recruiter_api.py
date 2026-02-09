@@ -115,6 +115,81 @@ class RecruiterApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
+    def test_resume_signal_strength_contract(self):
+        response = self.client.post(
+            "/v1/recruiter/resume-signal-strength",
+            json={**self.common, "resume_text": self.resume_text, "jd_text": self.jd_text},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn(body["overall_signal_level"], {"Strong", "Moderate", "Weak"})
+        self.assertTrue(body["summary"])
+        self.assertIsInstance(body["signal_dimensions"], list)
+        self.assertGreaterEqual(len(body["signal_dimensions"]), 1)
+
+    def test_jd_market_reality_contract(self):
+        response = self.client.post(
+            "/v1/recruiter/jd-market-reality",
+            json={**self.common, "jd_text": self.jd_text},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn(body["realism_rating"], {"Reasonable", "Stretch", "Unrealistic"})
+        self.assertIn("must_have_vs_nice_to_have", body)
+        self.assertIsInstance(body["concerns"], list)
+
+    def test_role_seniority_definition_contract(self):
+        response = self.client.post(
+            "/v1/recruiter/role-seniority-definition",
+            json={**self.common, "jd_text": self.jd_text},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn(body["recommended_level"], {"Junior", "Mid", "Senior", "Lead", "Staff", "Unclear"})
+        self.assertIn(body["confidence"], {"Low", "Medium", "High"})
+        self.assertIn("signals_detected", body)
+        self.assertIsInstance(body["suggested_interview_focus"], list)
+
+    def test_shortlist_justification_contract(self):
+        response = self.client.post(
+            "/v1/recruiter/shortlist-justification",
+            json={
+                **self.common,
+                "jd_text": self.jd_text,
+                "candidates": [
+                    {"candidate_label": "A", "resume_text": self.resume_text},
+                    {"candidate_label": "B", "resume_text": self.resume_text + " Built distributed APIs."},
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["shortlist_recommendation"])
+        self.assertIsInstance(body["candidate_notes"], list)
+        self.assertGreaterEqual(len(body["candidate_notes"]), 2)
+        self.assertTrue(body["copyable_hiring_notes"])
+
+    def test_bias_risk_detector_contract(self):
+        response = self.client.post(
+            "/v1/recruiter/bias-risk-detector",
+            json={
+                **self.common,
+                "jd_text": "We need a rockstar developer. No sponsorship. Must dominate fast-paced delivery.",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn(body["bias_risk_level"], {"Low", "Medium", "High"})
+        self.assertIsInstance(body["flagged_phrases"], list)
+        self.assertIsInstance(body["clarity_improvements"], list)
+
+    def test_bias_risk_detector_requires_input(self):
+        response = self.client.post(
+            "/v1/recruiter/bias-risk-detector",
+            json={**self.common, "jd_text": "", "evaluation_text": ""},
+        )
+        self.assertEqual(response.status_code, 422)
+
     def test_share_create_and_get(self):
         create_response = self.client.post(
             "/v1/recruiter/share",
@@ -147,7 +222,17 @@ class RecruiterApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_share_new_tool_slug_allowed(self):
+        response = self.client.post(
+            "/v1/recruiter/share",
+            json={
+                "tool_slug": "resume-signal-strength",
+                "locale": "en",
+                "result_payload": {"overall_signal_level": "Moderate"},
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()
-

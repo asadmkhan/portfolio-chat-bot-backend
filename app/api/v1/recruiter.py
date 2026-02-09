@@ -9,23 +9,38 @@ from app.schemas.recruiter import (
     ATSHumanRiskSplitResponse,
     ClaimVerificationRequest,
     ClaimVerificationResponse,
+    HiringBiasRiskDetectorRequest,
+    HiringBiasRiskDetectorResponse,
+    JDMarketRealityRequest,
+    JDMarketRealityResponse,
     JDQualityAnalyzerRequest,
     JDQualityResponse,
     RecruiterShareCreateRequest,
     RecruiterShareCreateResponse,
     RecruiterShareGetResponse,
+    ResumeSignalStrengthRequest,
+    ResumeSignalStrengthResponse,
     ResumeAuthenticityRequest,
     ResumeAuthenticityResponse,
     ResumeCompareRequest,
     ResumeCompareResponse,
+    RoleSeniorityDefinitionRequest,
+    RoleSeniorityDefinitionResponse,
+    ShortlistJustificationRequest,
+    ShortlistJustificationResponse,
 )
 from app.services.recruiter_service import (
     RecruiterQualityError,
     run_ats_vs_human,
+    run_hiring_bias_risk_detector,
+    run_jd_market_reality,
     run_claim_verification,
     run_jd_quality,
+    run_resume_signal_strength,
     run_resume_authenticity,
     run_resume_compare,
+    run_role_seniority_definition,
+    run_shortlist_justification,
     validate_share_payload,
 )
 
@@ -102,6 +117,51 @@ async def recruiter_resume_compare(request: Request, payload: ResumeCompareReque
         _raise_quality_error(exc)
 
 
+@router.post("/recruiter/resume-signal-strength", response_model=ResumeSignalStrengthResponse)
+async def recruiter_resume_signal_strength(request: Request, payload: ResumeSignalStrengthRequest):
+    _enforce_rate_limit(request, limit=20)
+    try:
+        return run_resume_signal_strength(payload)
+    except RecruiterQualityError as exc:
+        _raise_quality_error(exc)
+
+
+@router.post("/recruiter/jd-market-reality", response_model=JDMarketRealityResponse)
+async def recruiter_jd_market_reality(request: Request, payload: JDMarketRealityRequest):
+    _enforce_rate_limit(request, limit=20)
+    try:
+        return run_jd_market_reality(payload)
+    except RecruiterQualityError as exc:
+        _raise_quality_error(exc)
+
+
+@router.post("/recruiter/role-seniority-definition", response_model=RoleSeniorityDefinitionResponse)
+async def recruiter_role_seniority_definition(request: Request, payload: RoleSeniorityDefinitionRequest):
+    _enforce_rate_limit(request, limit=20)
+    try:
+        return run_role_seniority_definition(payload)
+    except RecruiterQualityError as exc:
+        _raise_quality_error(exc)
+
+
+@router.post("/recruiter/shortlist-justification", response_model=ShortlistJustificationResponse)
+async def recruiter_shortlist_justification(request: Request, payload: ShortlistJustificationRequest):
+    _enforce_rate_limit(request, limit=20)
+    try:
+        return run_shortlist_justification(payload)
+    except RecruiterQualityError as exc:
+        _raise_quality_error(exc)
+
+
+@router.post("/recruiter/bias-risk-detector", response_model=HiringBiasRiskDetectorResponse)
+async def recruiter_bias_risk_detector(request: Request, payload: HiringBiasRiskDetectorRequest):
+    _enforce_rate_limit(request, limit=20)
+    try:
+        return run_hiring_bias_risk_detector(payload)
+    except RecruiterQualityError as exc:
+        _raise_quality_error(exc)
+
+
 @router.post("/recruiter/share", response_model=RecruiterShareCreateResponse)
 async def recruiter_create_share(request: Request, payload: RecruiterShareCreateRequest):
     _enforce_rate_limit(request, limit=30)
@@ -130,4 +190,3 @@ async def recruiter_get_share(request: Request, share_id: str):
         created_at=record["created_at"],
         expires_at=record["expires_at"],
     )
-
