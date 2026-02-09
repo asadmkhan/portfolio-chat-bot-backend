@@ -81,11 +81,76 @@ STOPWORDS = {
 TOOL_TERMS = {
     "python", "java", "c#", "c++", "react", "next.js", "nextjs", "node.js", "node", "docker",
     "kubernetes", "aws", "azure", "gcp", "sql", "postgresql", "mongodb", "redis", "tensorflow", "pytorch",
+    "typescript", "javascript", "go", "golang", "rust", "ruby", "php", "swift", "kotlin",
+    "angular", "vue", "svelte", "django", "flask", "fastapi", "spring", "express",
+    "terraform", "ansible", "jenkins", "github", "gitlab", "circleci",
+    "elasticsearch", "kafka", "rabbitmq", "graphql", "rest", "grpc",
+    "mysql", "dynamodb", "cassandra", "neo4j", "snowflake",
+    "figma", "sketch", "jira", "confluence", "datadog", "splunk", "prometheus", "grafana",
+}
+
+# Synonym/alias map: maps alternate spellings -> canonical term for matching.
+# If a JD says "JavaScript" and resume says "JS", they should still match.
+TERM_SYNONYMS: dict[str, str] = {
+    "js": "javascript", "javascript": "javascript",
+    "ts": "typescript", "typescript": "typescript",
+    "react.js": "react", "reactjs": "react", "react": "react",
+    "next.js": "nextjs", "nextjs": "nextjs", "next": "nextjs",
+    "node.js": "node", "nodejs": "node", "node": "node",
+    "vue.js": "vue", "vuejs": "vue", "vue": "vue",
+    "angular.js": "angular", "angularjs": "angular", "angular": "angular",
+    "express.js": "express", "expressjs": "express", "express": "express",
+    "nest.js": "nestjs", "nestjs": "nestjs",
+    "nuxt.js": "nuxt", "nuxtjs": "nuxt",
+    "golang": "go", "go": "go",
+    "k8s": "kubernetes", "kubernetes": "kubernetes", "kube": "kubernetes",
+    "postgres": "postgresql", "postgresql": "postgresql", "pg": "postgresql",
+    "mongo": "mongodb", "mongodb": "mongodb",
+    "dynamodb": "dynamodb", "dynamo": "dynamodb",
+    "aws": "aws", "amazon web services": "aws",
+    "gcp": "gcp", "google cloud": "gcp", "google cloud platform": "gcp",
+    "azure": "azure", "microsoft azure": "azure",
+    "ci/cd": "ci/cd", "cicd": "ci/cd", "ci-cd": "ci/cd",
+    "c#": "c#", "csharp": "c#", "c-sharp": "c#",
+    "c++": "c++", "cpp": "c++",
+    ".net": "dotnet", "dotnet": "dotnet", "asp.net": "dotnet",
+    "tf": "terraform", "terraform": "terraform",
+    "ml": "machine learning", "machine learning": "machine learning",
+    "ai": "artificial intelligence", "artificial intelligence": "artificial intelligence",
+    "dl": "deep learning", "deep learning": "deep learning",
+    "llm": "large language models", "large language models": "large language models",
+    "nlp": "natural language processing", "natural language processing": "natural language processing",
+    "rest": "rest", "restful": "rest", "rest api": "rest",
+    "graphql": "graphql", "graph ql": "graphql",
+    "scss": "sass", "sass": "sass",
+    "es6": "javascript", "ecmascript": "javascript",
 }
 
 DOMAIN_TERMS = {
+    # Tech domains
     "fintech", "healthcare", "ecommerce", "saas", "crm", "erp", "compliance",
     "regulatory", "telecom", "education", "logistics",
+    # Marketing & sales
+    "seo", "sem", "ppc", "hubspot", "marketo", "salesforce", "analytics",
+    "branding", "content", "copywriting", "campaign", "conversion",
+    "abm", "martech", "automation",
+    # Finance & accounting
+    "accounting", "auditing", "forecasting", "budgeting", "gaap", "ifrs",
+    "valuation", "underwriting", "portfolio",
+    # HR & operations
+    "recruiting", "onboarding", "payroll", "succession", "workforce",
+    "procurement", "supply-chain", "inventory", "lean", "six-sigma",
+    # Legal & consulting
+    "litigation", "mediation", "arbitration", "due-diligence",
+    # Design & creative
+    "ux", "ui", "figma", "prototyping", "wireframing", "adobe",
+    # Data & research
+    "machine-learning", "data-science", "statistical", "modeling",
+    "visualization", "tableau", "power-bi",
+    # Healthcare-specific
+    "clinical", "pharmaceutical", "hipaa", "ehr", "fda",
+    # Construction & engineering
+    "cad", "autocad", "bim", "revit", "structural",
 }
 
 HARD_FILTER_TERMS = {
@@ -98,12 +163,19 @@ LOW_SIGNAL_TERMS = {
     "day", "days", "month", "months", "year", "years", "week", "weeks",
     "required", "requirement", "requirements", "requires", "preferred", "must", "need", "needed",
     "looking", "seeking", "candidate", "candidates", "position", "job", "responsibilities", "responsibility",
-    "work", "working", "ability", "abilities", "skill", "skills", "experience",
+    "work", "working", "ability", "abilities", "skill", "skills", "experience", "experienced",
     "engineer", "engineering", "developer", "development", "platform",
     "plus", "nice", "bonus", "good", "great", "strong", "excellent", "knowledge", "understanding",
     "onsite", "on-site", "hybrid", "remote", "office", "location", "based",
     "full", "time", "part", "level", "senior", "junior", "mid",
     "across", "within", "using", "with", "without", "from", "into",
+    # Job title words (not actionable skills)
+    "director", "manager", "coordinator", "supervisor", "specialist", "consultant",
+    "proven", "track", "record",
+    "proficiency", "proficient", "expertise", "expert", "familiar", "familiarity",
+    "tools", "tool", "equivalent", "related", "relevant", "including",
+    "decision", "making", "direct", "reports", "report",
+    "minimum", "ideal", "ideally", "typically", "approximately",
 }
 
 WORK_MODE_TERMS = {"remote", "hybrid", "onsite", "on-site"}
@@ -272,7 +344,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "cover_p1": "I am applying for this role with direct experience in {top_match}. My recent work shows measurable delivery in similar responsibilities.",
         "cover_p2": "This role emphasizes {role_hint}. I tailored my resume to make outcomes clear and strengthened wording around {improvement} without keyword stuffing.",
         "cover_closing": "Regards,",
-        "interview_missing_q": "Can you describe a project where you used {term} in production?",
+        "interview_missing_q": "Can you describe a specific example where you applied {term} and what the outcome was?",
         "interview_missing_r": "This appears in the job description but has limited evidence in your resume.",
         "interview_seniority_q": "Tell us about a high-stakes decision you led end-to-end.",
         "interview_seniority_r": "Interviewers may validate seniority signals for role scope.",
@@ -689,8 +761,15 @@ def _tokenize(text: str) -> list[str]:
     tokens: list[str] = []
     for raw in TOKEN_RE.findall(text):
         token = raw.lower().strip(".,;:!?()[]{}\"'")
-        if token:
-            tokens.append(token)
+        if not token:
+            continue
+        # Split compound tokens like "javascript/react.js/node.js" into individual terms
+        if "/" in token and len(token) > 3:
+            parts = [part.strip() for part in token.split("/") if part.strip() and len(part.strip()) > 1]
+            if len(parts) > 1:
+                tokens.extend(parts)
+                continue
+        tokens.append(token)
     return tokens
 
 
@@ -732,11 +811,16 @@ def _is_actionable_keyword(term: str, jd_lower: str) -> bool:
 def _seniority_to_years(value: str) -> int:
     return {
         "junior": 1,
-        "mid": 3,
-        "senior": 6,
-        "lead": 9,
-        "career-switcher": 1,
-    }.get(value, 3)
+        "entry": 1,
+        "mid": 4,
+        "mid-level": 4,
+        "senior": 7,
+        "staff": 9,
+        "lead": 10,
+        "principal": 12,
+        "director": 14,
+        "career-switcher": 2,
+    }.get(value.lower() if isinstance(value, str) else "", 4)
 
 
 VALID_RECOMMENDATIONS: set[str] = {"apply", "fix", "skip"}
@@ -1000,28 +1084,50 @@ def _dominant_country(records: list[dict[str, Any]]) -> str | None:
     return counts.most_common(1)[0][0]
 
 
+_STRONG_ACTION_VERBS_RE = re.compile(
+    r"^(?:built|led|delivered|optimized|designed|implemented|migrated|reduced|increased|"
+    r"developed|created|launched|deployed|automated|architected|engineered|configured|"
+    r"managed|directed|established|spearheaded|orchestrated|streamlined|scaled|"
+    r"integrated|refactored|resolved|achieved|improved|accelerated|consolidated|"
+    r"negotiated|mentored|coached|trained|supervised|coordinated|transformed|"
+    r"pioneered|executed|maintained|modernized|overhauled|secured|introduced|"
+    r"eliminated|expanded|initiated|founded|produced|published|analyzed)\b",
+    re.IGNORECASE,
+)
+
+_WEAK_CLAIM_PATTERNS = [
+    re.compile(r"\bresponsible\s+for\b", re.IGNORECASE),
+    re.compile(r"\b(?:assisted|helped)\s+(?:with|in)\b", re.IGNORECASE),
+    re.compile(r"\b(?:participated|involved)\s+in\b", re.IGNORECASE),
+    re.compile(r"\b(?:worked on|worked with)\b", re.IGNORECASE),
+    re.compile(r"\b(?:tasked with|duties included|handled various)\b", re.IGNORECASE),
+    re.compile(r"\b(?:familiar with|exposure to|knowledge of)\b", re.IGNORECASE),
+]
+
+
 def _credibility_score(resume_text: str, jd_text: str) -> dict[str, Any]:
     bullets = [line.strip() for line in resume_text.splitlines() if line.strip().startswith(("-", "*", "\u2022"))]
     if not bullets:
         bullets = [line.strip() for line in resume_text.splitlines() if line.strip()]
 
-    evidence_bullets = sum(1 for bullet in bullets if re.search(r"\d", bullet))
-    action_bullets = sum(1 for bullet in bullets if re.match(r"^(built|led|delivered|optimized|designed|implemented|migrated|reduced|increased)\b", bullet.lower()))
+    # Count bullets with real quantified impact (not just any digit)
+    evidence_bullets = sum(1 for bullet in bullets if _line_has_impact_quantification(bullet))
+    action_bullets = sum(1 for bullet in bullets if _STRONG_ACTION_VERBS_RE.match(bullet.lstrip("- *\u2022\t")))
     weak_claims = [
         bullet for bullet in bullets
-        if len(bullet.split()) >= 6 and not re.search(r"\d", bullet) and "responsible for" in bullet.lower()
+        if len(bullet.split()) >= 5 and any(pattern.search(bullet) for pattern in _WEAK_CLAIM_PATTERNS)
     ]
 
     jd_terms = set(_important_terms(jd_text, limit=50))
     resume_terms = set(_important_terms(resume_text, limit=80))
     evidence_alignment = len(jd_terms & resume_terms)
 
-    base = 48
-    base += min(24, evidence_bullets * 4)
-    base += min(14, action_bullets * 2)
-    base += min(10, evidence_alignment)
-    base -= min(16, len(weak_claims) * 4)
-    score = _clamp_int(base, default=60, min_value=1, max_value=100)
+    base = 45
+    base += min(26, evidence_bullets * 4)    # +4 per real quantified bullet, max 26
+    base += min(16, action_bullets * 2)      # +2 per action-led bullet, max 16
+    base += min(12, evidence_alignment)      # +1 per overlapping term, max 12
+    base -= min(18, len(weak_claims) * 3)    # -3 per weak claim, max -18
+    score = _clamp_int(base, default=55, min_value=1, max_value=100)
     return {
         "score": score,
         "evidence_bullets": evidence_bullets,
@@ -1035,18 +1141,29 @@ def _keyword_stuffing_report(resume_text: str, target_terms: list[str]) -> dict[
     total_tokens = max(1, len(resume_tokens))
     counts = Counter(resume_tokens)
     flags: list[dict[str, Any]] = []
+
+    # Core JD skills are expected to repeat more often. Only flag truly excessive repetition.
+    _core_skills = TOOL_TERMS | ROLE_SIGNAL_TERMS
     for term in target_terms[:30]:
         occurrences = counts.get(term, 0)
         if occurrences <= 0:
             continue
         density = occurrences / total_tokens
-        if density >= 0.035 or occurrences >= 7:
+        # Higher thresholds for core tech terms (they legitimately repeat in a Python-heavy role)
+        is_core = term in _core_skills
+        density_medium = 0.05 if is_core else 0.035
+        density_high = 0.08 if is_core else 0.055
+        count_medium = 10 if is_core else 7
+        count_high = 15 if is_core else 10
+
+        if density >= density_medium or occurrences >= count_medium:
+            risk = "high" if density >= density_high or occurrences >= count_high else "medium"
             flags.append(
                 {
                     "term": term,
                     "occurrences": occurrences,
                     "density": round(density, 4),
-                    "risk": "high" if density >= 0.06 or occurrences >= 10 else "medium",
+                    "risk": risk,
                 }
             )
     status = "clean"
@@ -1064,17 +1181,24 @@ def _analyze_bullet_quality(resume_text: str) -> dict[str, Any]:
 
     findings: list[dict[str, Any]] = []
     for bullet in bullets[:14]:
-        has_action = bool(re.match(r"^(built|led|delivered|optimized|designed|implemented|migrated|reduced|increased|automated)\b", bullet.lower()))
+        stripped = bullet.lstrip("- *\u2022\t")
+        has_action = bool(_STRONG_ACTION_VERBS_RE.match(stripped))
         has_context = len(_tokenize(bullet)) >= 8
-        has_outcome = bool(re.search(r"\d|%|faster|reduced|increased|improved|saved", bullet.lower()))
-        score = 35 + (25 if has_action else 0) + (20 if has_context else 0) + (20 if has_outcome else 0)
+        # Check for real quantified outcomes, not just any digit
+        has_outcome = _line_has_impact_quantification(bullet)
+        is_weak = any(pattern.search(bullet) for pattern in _WEAK_CLAIM_PATTERNS)
+        score = 30
+        score += 25 if has_action else 0         # strong action verb start
+        score += 15 if has_context else 0         # sufficient detail/length
+        score += 25 if has_outcome else 0         # real quantified impact
+        score -= 15 if is_weak else 0             # penalty for weak phrasing
         findings.append(
             {
                 "bullet": bullet,
                 "what": has_action,
                 "how": has_context,
                 "why": has_outcome,
-                "quality_score": _clamp_int(score, default=55, min_value=1, max_value=100),
+                "quality_score": _clamp_int(score, default=50, min_value=1, max_value=100),
             }
         )
     average = int(round(sum(item["quality_score"] for item in findings) / max(1, len(findings))))
@@ -1084,6 +1208,10 @@ def _analyze_bullet_quality(resume_text: str) -> dict[str, Any]:
 def _humanization_report(text: str) -> dict[str, Any]:
     lowered = text.lower()
     detected = sorted({term for term in AI_CLICHE_TERMS if term in lowered})
+    # Build regex from all detected clichés (not just a hardcoded subset)
+    _cliche_patterns = [re.escape(term) for term in detected]
+    _cliche_re = re.compile(r"\b(?:" + "|".join(_cliche_patterns) + r")\b", re.IGNORECASE) if _cliche_patterns else None
+
     sentences = re.split(r"(?<=[.!?])\s+", text.strip())
     rewritten_samples: list[dict[str, str]] = []
     for sentence in sentences:
@@ -1091,11 +1219,17 @@ def _humanization_report(text: str) -> dict[str, Any]:
         if not s:
             continue
         lowered_sentence = s.lower()
-        if not any(term in lowered_sentence for term in AI_CLICHE_TERMS):
+        if not any(term in lowered_sentence for term in detected):
             continue
-        cleaned = re.sub(r"\b(results-driven|dynamic professional|passionate about)\b", "", lowered_sentence, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip().capitalize()
-        if cleaned and cleaned != s:
+        if _cliche_re:
+            cleaned = _cliche_re.sub("", s)
+        else:
+            cleaned = s
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+        # Preserve original capitalization; only capitalize if first char was removed
+        if cleaned and cleaned[0].islower() and s[0].isupper():
+            cleaned = cleaned[0].upper() + cleaned[1:]
+        if cleaned and cleaned != s and len(cleaned) > 10:
             rewritten_samples.append({"original": s, "suggested": cleaned})
         if len(rewritten_samples) >= 5:
             break
@@ -1159,8 +1293,10 @@ def _infer_layout_profile_from_text(resume_text: str, *, source_type: str = "tex
     if text_signals["probable_table"]:
         signals.append("probable_table_structure_detected")
 
-    # Text-only inference should stay conservative: avoid treating header separators
-    # (e.g., "A | B | C") as true multi-column evidence.
+    multi_col_signal = text_signals.get("multi_column_text_signal", False)
+    side_by_side = _clamp_int(text_signals.get("side_by_side_lines"), default=0, min_value=0, max_value=10000)
+    deep_indent = _clamp_int(text_signals.get("deep_indent_lines"), default=0, min_value=0, max_value=10000)
+
     if source_type in {"text", "unknown"}:
         if text_signals["probable_table"] and (
             pipe_hits >= 14 or (wide_space_hits >= 9 and tab_hits >= 4)
@@ -1169,19 +1305,33 @@ def _infer_layout_profile_from_text(resume_text: str, *, source_type: str = "tex
             column_count = 2
             confidence = max(confidence, 0.76)
             signals.append("multi_column_pattern_detected")
+        elif multi_col_signal:
+            detected_layout = "multi_column"
+            column_count = 2
+            confidence = max(confidence, 0.74)
+            signals.append("multi_column_text_extraction_pattern")
         elif text_signals["probable_table"] or wide_space_hits >= 8:
             detected_layout = "hybrid"
             column_count = 2
             confidence = max(confidence, 0.62)
             signals.append("hybrid_layout_pattern_detected")
     else:
-        # For extracted PDF/DOCX text, line spacing noise is common; only mark hybrid from text
-        # when table-like structure is actually detected. Multi-column is determined by geometry/XML.
-        if text_signals["probable_table"]:
+        # For extracted PDF/DOCX text, use both table signals and text extraction patterns
+        if multi_col_signal:
+            detected_layout = "multi_column"
+            column_count = 2
+            confidence = max(confidence, 0.78)
+            signals.append("multi_column_text_extraction_pattern")
+        elif text_signals["probable_table"]:
             detected_layout = "hybrid"
             column_count = 2
             confidence = max(confidence, 0.64)
             signals.append("hybrid_layout_pattern_detected")
+        elif side_by_side >= 3 or deep_indent >= 5:
+            detected_layout = "hybrid"
+            column_count = 2
+            confidence = max(confidence, 0.58)
+            signals.append("partial_multi_column_hints")
 
     table_count = 0
     if text_signals["probable_table"]:
@@ -1506,10 +1656,44 @@ def _text_layout_signals(resume_text: str) -> dict[str, Any]:
         average = sum(pipe_counts) / max(1, len(pipe_counts))
         consistent_pipe_pattern = spread <= 2 and average >= 3
 
+    # Detect lines with dramatically different indentation (multi-column text extraction)
+    # When PDFs extract multi-column text, lines often alternate between left-aligned and
+    # heavily indented (right-column) content
+    indents = [len(line) - len(line.lstrip()) for line in lines if line.strip()]
+    mixed_indent_lines = 0
+    deep_indent_lines = 0
+    if indents:
+        median_indent = sorted(indents)[len(indents) // 2]
+        deep_indent_lines = sum(1 for i in indents if i >= max(20, median_indent + 15))
+        mixed_indent_lines = sum(1 for i in indents if i >= 10)
+
+    # Detect side-by-side content: lines that look like two separate phrases separated
+    # by large whitespace gaps (common in multi-column PDF extraction)
+    side_by_side_lines = sum(
+        1 for line in lines
+        if re.search(r"\S\s{5,}\S", line) and len(line.strip()) >= 20
+    )
+
+    # Detect lines with very different lengths interleaved (left col short, right col starts)
+    line_lengths = [len(line.strip()) for line in lines if line.strip()]
+    short_long_alternation = 0
+    if len(line_lengths) >= 6:
+        for i in range(len(line_lengths) - 1):
+            if (line_lengths[i] < 40 and line_lengths[i + 1] >= 60) or (line_lengths[i] >= 60 and line_lengths[i + 1] < 40):
+                short_long_alternation += 1
+
     probable_table = (
         markdown_table_lines >= 1
         or (len(pipe_lines) >= 3 and consistent_pipe_pattern and pipe_token_total >= 10)
         or (tab_line_count >= 3 and wide_space_lines >= 4)
+    )
+
+    # Detect multi-column signals from text extraction patterns
+    multi_column_text_signal = (
+        side_by_side_lines >= 5  # lines with big whitespace gaps
+        or deep_indent_lines >= 8  # many deeply indented lines (right column)
+        or (wide_space_lines >= 12 and mixed_indent_lines >= 10)
+        or (short_long_alternation >= 8 and len(line_lengths) >= 15)
     )
 
     return {
@@ -1521,6 +1705,11 @@ def _text_layout_signals(resume_text: str) -> dict[str, Any]:
         "markdown_table_lines": markdown_table_lines,
         "consistent_pipe_pattern": consistent_pipe_pattern,
         "probable_table": probable_table,
+        "side_by_side_lines": side_by_side_lines,
+        "deep_indent_lines": deep_indent_lines,
+        "mixed_indent_lines": mixed_indent_lines,
+        "short_long_alternation": short_long_alternation,
+        "multi_column_text_signal": multi_column_text_signal,
     }
 
 
@@ -1561,7 +1750,10 @@ def _effective_detected_layout(layout_profile: dict[str, Any], resume_text: str)
     if detected_layout == "hybrid" and confidence < 0.62:
         return "unknown"
 
-    # Do not classify as multi/hybrid from weak spacing noise only.
+    # Do not classify as multi/hybrid from weak spacing noise only — but respect
+    # strong multi-column text extraction signals even without pipe/tab evidence.
+    if text_signals.get("multi_column_text_signal"):
+        return detected_layout
     if (
         text_signals["pipe_line_count"] <= 1
         and text_signals["wide_space_lines"] < 6
@@ -1601,15 +1793,23 @@ def _safe_issue_examples(raw_value: Any, *, max_items: int = 6) -> list[dict[str
     return output
 
 
+_SECTION_TITLE_KEYWORDS = {
+    "summary", "experience", "skills", "education", "projects", "certifications",
+    "professional profile", "profile", "objective", "work history", "employment",
+    "competencies", "tech stack", "technologies", "technical skills",
+    "achievements", "awards", "publications", "languages", "interests",
+    "references", "volunteer", "training", "qualifications", "career highlights",
+    "professional summary", "key skills", "core competencies",
+}
+
+
 def _is_section_title_line(line: str) -> bool:
     stripped = line.strip()
     lower = stripped.lower()
-    if len(stripped.split()) <= 5 and any(
-        token in lower
-        for token in {"summary", "experience", "skills", "education", "projects", "certifications"}
-    ):
+    if len(stripped.split()) <= 6 and any(kw in lower for kw in _SECTION_TITLE_KEYWORDS):
         return True
-    return bool(re.fullmatch(r"[A-Z\s/&\-]{3,}", stripped) and len(stripped.split()) <= 6)
+    # All-caps short lines are section headings (EXPERIENCE, SKILLS, EDUCATION etc.)
+    return bool(re.fullmatch(r"[A-Z\s/&\-:]{3,}", stripped) and len(stripped.split()) <= 6)
 
 
 def _is_contact_or_header_line(line: str) -> bool:
@@ -1621,7 +1821,94 @@ def _is_contact_or_header_line(line: str) -> bool:
     return False
 
 
+def _is_job_title_or_role_line(line: str) -> bool:
+    """Detect lines that are job titles, role headers, or company/date lines — not experience bullets."""
+    stripped = line.strip()
+    lower = stripped.lower()
+
+    # Lines with multiple pipes are typically title separators:
+    # "Senior Developer | AI Engineer | .NET | Python"
+    if stripped.count("|") >= 2:
+        return True
+
+    # Lines that are mostly comma-separated tech terms (skill lists):
+    # "C#, .NET Framework, .NET Core 5-10, Node.js, and Python, paired with"
+    comma_count = stripped.count(",")
+    words = stripped.split()
+    if comma_count >= 3 and len(words) <= comma_count * 4:
+        return True
+
+    # Lines matching "Role at Company | Date" or "Company — Date" patterns
+    if re.search(r"\b(?:19|20)\d{2}\s*[-–—/]\s*(?:(?:19|20)\d{2}|present|current|now)\b", lower):
+        if len(words) <= 12:
+            return True
+
+    # Lines that look like role titles: short + contain seniority/role terms
+    _title_signals = {
+        "senior", "junior", "lead", "principal", "staff", "intern", "head",
+        "engineer", "developer", "architect", "analyst", "designer", "manager",
+        "director", "consultant", "specialist", "coordinator", "scientist",
+        "administrator", "technician", "associate", "officer", "vp",
+    }
+    if len(words) <= 10:
+        signal_hits = sum(1 for w in words if w.lower().rstrip(",|") in _title_signals)
+        if signal_hits >= 2:
+            return True
+
+    # Summary/profile intro sentences (not experience bullets):
+    # "Experienced Full-Stack Developer with 10+ years..."
+    _summary_starts = {
+        "experienced", "accomplished", "results-driven", "results-oriented",
+        "dedicated", "motivated", "passionate", "dynamic", "innovative",
+        "seasoned", "detail-oriented", "versatile", "proactive", "skilled",
+    }
+    first_word = words[0].lower().rstrip(",") if words else ""
+    if first_word in _summary_starts:
+        return True
+    if re.match(r"^(?:a|an)\s+(?:experienced|accomplished|dedicated|motivated)", lower):
+        return True
+    # "Full-Stack Developer with 10+ years of experience..."
+    if re.match(r"^[A-Z][\w\s\-/|]+(?:with|having)\s+\d+\+?\s*(?:years|yrs)", stripped) and len(words) <= 18:
+        return True
+
+    # Lines that are just a person's name (1-4 capitalized words, no verbs)
+    if len(words) <= 4 and all(w[0:1].isupper() for w in words if w.isalpha()):
+        if not any(w.lower() in IMPACT_VERB_HINTS for w in words):
+            return True
+
+    return False
+
+
+def _is_skill_list_line(line: str) -> bool:
+    """Detect lines that are comma/pipe-separated skill or technology lists."""
+    stripped = line.strip()
+    lower = stripped.lower()
+
+    # Heavy comma-separated lists: "Python, React, Docker, Kubernetes, AWS"
+    comma_count = stripped.count(",")
+    if comma_count >= 2:
+        segments = [s.strip() for s in stripped.split(",")]
+        short_segments = sum(1 for s in segments if len(s.split()) <= 3)
+        if short_segments >= len(segments) * 0.6:
+            return True
+
+    # Lines starting with category labels: "Languages:", "Front-End:", "DevOps:", etc.
+    if re.match(r"^[A-Za-z\s\-/&]+:\s+", stripped) and comma_count >= 1:
+        return True
+
+    # Lines that are mostly tech terms
+    tokens = _tokenize(stripped)
+    if tokens:
+        tech_ratio = sum(1 for t in tokens if t in TOOL_TERMS) / len(tokens)
+        if tech_ratio >= 0.4 and len(tokens) >= 3:
+            return True
+
+    return False
+
+
 def _extract_candidate_experience_lines(lines: list[str]) -> list[str]:
+    """Extract only actual experience bullet lines from resume, excluding
+    titles, headers, contact info, skill lists, role names, summaries, etc."""
     candidates: list[str] = []
     for index, line in enumerate(lines):
         stripped = line.strip()
@@ -1629,7 +1916,11 @@ def _extract_candidate_experience_lines(lines: list[str]) -> list[str]:
             continue
         if _is_section_title_line(stripped):
             continue
-        if index <= 3 and _is_contact_or_header_line(stripped):
+        if _is_contact_or_header_line(stripped):
+            continue
+        if _is_job_title_or_role_line(stripped):
+            continue
+        if _is_skill_list_line(stripped):
             continue
         if len(stripped) < 28:
             continue
@@ -1693,10 +1984,11 @@ def _analyze_quantifying_impact(lines: list[str]) -> dict[str, Any]:
     candidates = _extract_candidate_experience_lines(lines)
     quantified_lines: list[str] = []
     unquantified_lines: list[str] = []
-    excluded_numeric_tokens = 0
+    # Count non-impact numeric noise across the full resume (dates, phones, tenure-only numbers),
+    # not only extracted bullets, so the metric reflects real resume clutter.
+    excluded_numeric_tokens = sum(_count_excluded_numeric_tokens(line) for line in lines if line.strip())
 
     for line in candidates:
-        excluded_numeric_tokens += _count_excluded_numeric_tokens(line)
         if _line_has_impact_quantification(line):
             quantified_lines.append(line)
         else:
@@ -1861,6 +2153,31 @@ def _analyze_repetition(lines: list[str]) -> dict[str, Any]:
     }
 
 
+# Tech terms and patterns that should NOT be flagged as spelling/grammar issues.
+# Covers software, frameworks, certifications, and common naming conventions.
+_TECH_PUNCTUATION_PATTERNS = re.compile(
+    r"\.NET|\.js|\.ts|\.py|\.rb|\.go|\.rs|\.io|\.ai|\.co|\.dev|\.app|"
+    r"Node\.js|React\.js|Vue\.js|Next\.js|Nest\.js|Express\.js|Angular\.js|Nuxt\.js|"
+    r"ASP\.NET|ADO\.NET|VB\.NET|"
+    r"C\+\+|C#|F#|"
+    r"v\d+\.\d+|"  # version numbers like v3.5
+    r"\d+\.\d+(?:\.\d+)*|"  # version numbers like 3.5.4, 5-10
+    r"Ph\.D|M\.S\.|B\.S\.|M\.A\.|B\.A\.|MBA|"
+    r"i\.e\.|e\.g\.|etc\.|vs\.|"  # standard abbreviations
+    r"Sr\.|Jr\.|Dr\.|Mr\.|Mrs\.|",
+    re.IGNORECASE,
+)
+
+# Common lines that look like they start with lowercase but are valid
+# (e.g., bullet continuations, multi-line extractions from PDFs)
+_LOWERCASE_START_EXCEPTIONS = re.compile(
+    r"^(?:e\.g\.|i\.e\.|vs\.|etc\.|and\b|or\b|with\b|using\b|via\b|"
+    r"iOS|iPad|iPhone|eBay|jQuery|npm|webpack|git|kubectl|"
+    r"[a-z]+\.js|[a-z]+\.py|[a-z]+\.io)",
+    re.IGNORECASE,
+)
+
+
 def _deterministic_spelling_candidates(lines: list[str]) -> list[dict[str, str]]:
     candidates: list[dict[str, str]] = []
     for line in lines[:120]:
@@ -1868,33 +2185,56 @@ def _deterministic_spelling_candidates(lines: list[str]) -> list[dict[str, str]]
         if not stripped or len(stripped) < 4:
             continue
 
-        if re.search(r"\s{2,}", stripped):
-            candidates.append(
-                {
-                    "text": stripped,
-                    "reason": "Contains repeated spacing.",
-                    "suggestion": "Normalize spacing to single spaces.",
-                    "severity": "low",
-                }
-            )
+        # -- Repeated spacing (keep, but skip lines that look like extracted PDF column gaps) --
+        spacing_matches = list(re.finditer(r"\s{2,}", stripped))
+        if spacing_matches:
+            # Only flag if it's NOT a side-by-side column extraction pattern (huge gaps)
+            max_gap = max(m.end() - m.start() for m in spacing_matches)
+            if max_gap <= 6:  # small repeated spaces = real formatting issue
+                candidates.append(
+                    {
+                        "text": stripped,
+                        "reason": "Contains repeated spacing.",
+                        "suggestion": "Normalize spacing to single spaces.",
+                        "severity": "low",
+                    }
+                )
+
+        # -- Repeated punctuation: exclude tech terms like .NET, C#, version numbers --
         if re.search(r"[!?.,]{2,}", stripped):
-            candidates.append(
-                {
-                    "text": stripped,
-                    "reason": "Contains repeated punctuation.",
-                    "suggestion": "Use a single punctuation mark for sentence endings.",
-                    "severity": "medium",
-                }
-            )
+            # Strip out known tech patterns before checking for real punctuation issues
+            cleaned_for_punct = _TECH_PUNCTUATION_PATTERNS.sub("__TECH__", stripped)
+            if re.search(r"[!?.,]{2,}", cleaned_for_punct):
+                candidates.append(
+                    {
+                        "text": stripped,
+                        "reason": "Contains repeated punctuation.",
+                        "suggestion": "Use a single punctuation mark for sentence endings.",
+                        "severity": "medium",
+                    }
+                )
+
+        # -- Lowercase start: exclude tech terms, bullet continuations, PDF extraction artifacts --
         if re.match(r"^[a-z]", stripped) and len(stripped.split()) >= 4:
-            candidates.append(
-                {
-                    "text": stripped,
-                    "reason": "Sentence starts with lowercase where capitalization is expected.",
-                    "suggestion": "Capitalize sentence start and proper nouns.",
-                    "severity": "low",
-                }
-            )
+            if not _LOWERCASE_START_EXCEPTIONS.match(stripped):
+                # Skip PDF extraction artifacts — lines that look like mid-sentence continuations
+                # (start with a common word fragment after a sentence-ending period)
+                _is_continuation = bool(re.match(
+                    r"^(?:applications?|and|or|with|using|including|such as|as well as|in addition|"
+                    r"both|services|systems|tools|platforms|frameworks|technologies|databases|solutions|"
+                    r"combined|paired|along|together)\b",
+                    stripped.lower()
+                ))
+                if not _is_continuation and not stripped[0:1] in {"–", "-"} and len(stripped) >= 20:
+                    candidates.append(
+                        {
+                            "text": stripped,
+                            "reason": "Sentence starts with lowercase where capitalization is expected.",
+                            "suggestion": "Capitalize sentence start and proper nouns.",
+                            "severity": "low",
+                        }
+                    )
+
         lower = stripped.lower()
         for typo, correction in COMMON_TYPO_MAP.items():
             if re.search(rf"\b{re.escape(typo)}\b", lower):
@@ -1906,15 +2246,20 @@ def _deterministic_spelling_candidates(lines: list[str]) -> list[dict[str, str]]
                         "severity": "high",
                     }
                 )
+
+        # -- Lowercase 'i': only flag in clear sentence contexts, not in tech patterns --
         if re.search(r"\bi\b", stripped):
-            candidates.append(
-                {
-                    "text": stripped,
-                    "reason": "Standalone lowercase 'i' detected.",
-                    "suggestion": "Use uppercase 'I' in English text.",
-                    "severity": "low",
-                }
-            )
+            # Skip if 'i' appears in tech contexts (i/o, i.e., CI/CD, etc.)
+            cleaned_for_i = re.sub(r"i/o|i\.e\.|i\.e|CI/CD|UI/UX|API", "", stripped)
+            if re.search(r"(?<![/.])\bi\b(?![/.])", cleaned_for_i):
+                candidates.append(
+                    {
+                        "text": stripped,
+                        "reason": "Standalone lowercase 'i' detected.",
+                        "suggestion": "Use uppercase 'I' in English text.",
+                        "severity": "low",
+                    }
+                )
 
     deduped: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -1938,7 +2283,10 @@ def _analyze_spelling_grammar(*, locale: str, lines: list[str]) -> dict[str, Any
     if _strict_llm_required():
         llm_payload = json_completion_required(
             system_prompt=(
-                "You are a resume proofreading assistant. Validate only real language issues and return strict JSON."
+                "You are a resume proofreading assistant. Validate only real language issues and return strict JSON. "
+                "IMPORTANT: Do NOT flag technology names as grammar errors. Names like .NET, C#, C++, Node.js, Vue.js, "
+                "ASP.NET, F#, React.js etc. use dots, hashes, and plus signs as part of their official names. "
+                "Also ignore version numbers (3.5, 5-10) and standard abbreviations (e.g., i.e., etc.)."
             ),
             user_prompt=(
                 f"Language: {_locale_language_name(locale)}.\n"
@@ -1957,7 +2305,10 @@ def _analyze_spelling_grammar(*, locale: str, lines: list[str]) -> dict[str, Any
     elif candidates:
         llm_payload = json_completion(
             system_prompt=(
-                "You are a resume proofreading assistant. Validate only real language issues and return strict JSON."
+                "You are a resume proofreading assistant. Validate only real language issues and return strict JSON. "
+                "IMPORTANT: Do NOT flag technology names as grammar errors. Names like .NET, C#, C++, Node.js, Vue.js, "
+                "ASP.NET, F#, React.js etc. use dots, hashes, and plus signs as part of their official names. "
+                "Also ignore version numbers (3.5, 5-10) and standard abbreviations (e.g., i.e., etc.)."
             ),
             user_prompt=(
                 f"Language: {_locale_language_name(locale)}.\n"
@@ -2140,16 +2491,35 @@ def _build_searchability(resume_text: str) -> dict[str, Any]:
     date_count = len(DATE_RE.findall(resume_text))
     word_count = len(resume_text.split())
 
+    # Evaluate additional searchability signals
+    _has_linkedin = bool(re.search(r"linkedin\.com/in/", resume_lower))
+    _has_github = bool(re.search(r"github\.com/", resume_lower))
+    _has_portfolio = bool(re.search(r"(?:portfolio|\.dev|\.io|\.com/~)", resume_lower))
+
+    # Word count assessment for ATS
+    if 400 <= word_count <= 850:
+        _wc_status = "optimal"
+    elif word_count < 300:
+        _wc_status = "too_short"
+    elif word_count > 1200:
+        _wc_status = "too_long"
+    else:
+        _wc_status = "acceptable"
+
     return {
         "name": name,
         "email": email,
         "phone": phone,
         "has_email": bool(email),
         "has_phone": bool(phone),
+        "has_linkedin": _has_linkedin,
+        "has_github": _has_github,
+        "has_portfolio": _has_portfolio,
         "sections_detected": detected,
         "sections_missing": missing,
         "date_formats_found": date_count,
         "word_count": word_count,
+        "word_count_status": _wc_status,
         "line_count": len(non_empty_lines),
     }
 
@@ -2178,12 +2548,10 @@ def _build_recruiter_tips(
     jd_requires_degree = any(kw in jd_lower for kw in degree_keywords)
     education_match = not jd_requires_degree or resume_has_degree
 
-    measurable_lines = [
-        line for line in lines
-        if re.search(r"\d+\s*%|\$\s*\d|[0-9]+x\b|\b\d{2,}\b", line)
-    ]
+    # Use real impact quantification check (not just any digit)
+    measurable_lines = [line for line in lines if _line_has_impact_quantification(line)]
     measurable_count = len(measurable_lines)
-    if measurable_count >= 4:
+    if measurable_count >= 5:
         measurable_status = "good"
     elif measurable_count >= 2:
         measurable_status = "needs_work"
@@ -2972,33 +3340,62 @@ def _build_base_analysis(
         actionable_jd_terms = [term for term in jd_terms_raw if term not in STOPWORDS][:30]
 
     resume_terms = set(_important_terms(resume_text, limit=120))
-    missing_terms = [term for term in actionable_jd_terms if term not in resume_terms][:18]
-    matched_terms = [term for term in actionable_jd_terms if term in resume_terms][:18]
-    overlap_ratio = (len(matched_terms) / max(len(actionable_jd_terms), 1)) if actionable_jd_terms else 0.0
+
+    # Build canonical synonym sets so "JS" in resume matches "JavaScript" in JD
+    def _canonical(term: str) -> str:
+        return TERM_SYNONYMS.get(term.lower(), term.lower())
+
+    resume_canonical = {_canonical(t) for t in resume_terms} | resume_terms
+    missing_terms = [term for term in actionable_jd_terms if term not in resume_terms and _canonical(term) not in resume_canonical][:18]
+    matched_terms = [term for term in actionable_jd_terms if term in resume_terms or _canonical(term) in resume_canonical][:18]
+
+    # Weighted overlap: hard skills count more than generic terms
+    _hard_skill_set = TOOL_TERMS | ROLE_SIGNAL_TERMS | DOMAIN_TERMS
+    _matched_weight = sum(2.0 if term in _hard_skill_set else 1.0 for term in matched_terms)
+    _total_weight = sum(2.0 if term in _hard_skill_set else 1.0 for term in actionable_jd_terms)
+    overlap_ratio = (_matched_weight / max(_total_weight, 1.0)) if actionable_jd_terms else 0.0
     job_match = int(round(min(max(overlap_ratio, 0.0), 1.0) * 100))
 
     risks: list[RiskItem] = []
     fix_plan: list[FixPlanItem] = []
     hard_filter_hits: list[str] = []
 
-    if ("visa" in jd_lower or "work authorization" in jd_lower or "citizenship" in jd_lower) and (
-        "visa" not in resume_lower and "authorized" not in resume_lower and "citizen" not in resume_lower and "work authorization" not in resume_lower
-    ):
+    # -- Hard filter detection with word-boundary matching to avoid false positives --
+    _visa_jd = bool(re.search(r"\b(?:visa|work\s+authorization|work\s+permit|citizenship|right\s+to\s+work|authorized\s+to\s+work)\b", jd_lower))
+    _visa_resume = bool(re.search(r"\b(?:visa|work\s+authorization|work\s+permit|citizen(?:ship)?|authorized|right\s+to\s+work|permanent\s+resident|green\s+card)\b", resume_lower))
+    if _visa_jd and not _visa_resume:
         hard_filter_hits.append(_msg(locale, "hf_visa"))
-    if ("bachelor" in jd_lower or "master" in jd_lower or "phd" in jd_lower or "degree" in jd_lower) and (
-        "bachelor" not in resume_lower and "master" not in resume_lower and "phd" not in resume_lower and "degree" not in resume_lower
-    ):
+
+    _degree_jd = bool(re.search(r"\b(?:bachelor(?:'?s)?|master(?:'?s)?|phd|ph\.d|degree|b\.?s\.?|m\.?s\.?|mba|b\.?a\.?|m\.?a\.?)\b", jd_lower))
+    _degree_resume = bool(re.search(r"\b(?:bachelor(?:'?s)?|master(?:'?s)?|phd|ph\.d|degree|b\.?s\.?|m\.?s\.?|mba|b\.?a\.?|m\.?a\.?|diploma|certified|certification)\b", resume_lower))
+    if _degree_jd and not _degree_resume:
         hard_filter_hits.append(_msg(locale, "hf_degree"))
-    if "security clearance" in jd_lower and "clearance" not in resume_lower:
+
+    _clearance_jd = bool(re.search(r"\b(?:security\s+clearance|clearance\s+required|top\s+secret|ts/sci|secret\s+clearance)\b", jd_lower))
+    _clearance_resume = bool(re.search(r"\b(?:clearance|top\s+secret|ts/sci|secret|classified)\b", resume_lower))
+    if _clearance_jd and not _clearance_resume:
         hard_filter_hits.append(_msg(locale, "hf_clearance"))
 
-    years_required = max((int(x) for x in YEARS_RE.findall(jd_lower)), default=0)
+    # -- Seniority gap: distinguish "required" (strict) vs "preferred" (lenient) years --
+    _years_matches = YEARS_RE.findall(jd_lower)
+    years_required = max((int(x) for x in _years_matches), default=0)
     years_signal = _seniority_to_years(payload.candidate_profile.seniority)
-    seniority_gap = years_required > 0 and years_required > years_signal + 2
+    # Check if years are "preferred" / "nice to have" rather than hard required
+    _years_is_preferred = bool(re.search(
+        r"(?:prefer(?:red|ably)?|ideal(?:ly)?|nice\s+to\s+have|bonus|desired|typically)\s+.{0,30}\d{1,2}\+?\s*(?:years|yrs)",
+        jd_lower
+    )) or bool(re.search(
+        r"\d{1,2}\+?\s*(?:years|yrs)\s+.{0,20}(?:prefer|ideal|desired|bonus|nice)",
+        jd_lower
+    ))
+    # Allow more flexibility for preferred requirements (+4 buffer instead of +2)
+    _seniority_buffer = 4 if _years_is_preferred else 2
+    seniority_gap = years_required > 0 and years_required > years_signal + _seniority_buffer
+    _seniority_severity = "medium" if _years_is_preferred else ("high" if years_required >= 8 else "medium")
 
     if seniority_gap:
         gap_years = max(1, years_required - years_signal)
-        risks.append(RiskItem(type="seniority", severity="high" if years_required >= 8 else "medium", message=_msg(locale, "risk_seniority")))
+        risks.append(RiskItem(type="seniority", severity=_seniority_severity, message=_msg(locale, "risk_seniority")))
         fix_plan.append(
             FixPlanItem(
                 id="seniority-signal",
@@ -3042,10 +3439,13 @@ def _build_base_analysis(
             )
         )
 
-    numeric_evidence_count = len(re.findall(r"\d", resume_text))
-    if numeric_evidence_count < 6:
+    # -- Evidence detection: count lines with real quantified achievements, not raw digits --
+    _evidence_lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
+    _achievement_count = sum(1 for line in _evidence_lines if _line_has_impact_quantification(line))
+    _evidence_threshold = max(3, min(6, len(_evidence_lines) // 8))  # scale threshold to resume length
+    if _achievement_count < _evidence_threshold:
         risks.append(RiskItem(type="evidence_gap", severity="medium", message=_msg(locale, "risk_evidence_gap")))
-        missing_evidence_points = 6 - numeric_evidence_count
+        missing_evidence_points = _evidence_threshold - _achievement_count
         fix_plan.append(
             FixPlanItem(
                 id="evidence-bullets",
@@ -3066,9 +3466,15 @@ def _build_base_analysis(
         recommendation = "fix"
 
     high_risks = sum(1 for risk in risks if risk.severity == "high")
-    confidence = max(0.4, min(0.95, 0.65 + (job_match / 250) - (high_risks * 0.08)))
+    med_risks = sum(1 for risk in risks if risk.severity == "medium")
+    # Confidence reflects how certain we are in the recommendation, not how good the resume is
+    # More data points (matched + missing terms) = more confident analysis
+    _data_richness = min(0.15, (len(matched_terms) + len(missing_terms)) / 120)
+    confidence = max(0.4, min(0.95, 0.60 + _data_richness + (job_match / 300) - (high_risks * 0.10) - (med_risks * 0.03)))
     if recommendation == "skip":
         confidence = min(confidence, 0.55)
+    if not actionable_jd_terms:
+        confidence = min(confidence, 0.50)  # low confidence when JD has no actionable terms
     if not fix_plan:
         fix_plan.append(FixPlanItem(id="final-polish", title=_msg(locale, "fix_evidence_title"), impact_score=25, effort_minutes=12, reason=_msg(locale, "fix_evidence_reason")))
 
@@ -3294,6 +3700,38 @@ def _build_base_analysis(
 
 def run_job_match(payload: ToolRequest) -> ToolResponse:
     base = _build_base_analysis(payload)
+
+    # Compute match quality breakdown for richer insights
+    _jm_matched = base["matched_terms"]
+    _jm_missing = base["missing_terms"]
+    _jm_total = len(_jm_matched) + len(_jm_missing)
+    _jm_hard_skill_set = TOOL_TERMS | ROLE_SIGNAL_TERMS | DOMAIN_TERMS
+
+    _jm_hard_matched = [t for t in _jm_matched if t in _jm_hard_skill_set]
+    _jm_hard_missing = [t for t in _jm_missing if t in _jm_hard_skill_set]
+    _jm_soft_matched = [t for t in _jm_matched if t in SOFT_SKILL_TERMS]
+
+    # Determine match strength category
+    _jm_score = base["scores"].job_match
+    if _jm_score >= 75:
+        _jm_strength = "strong"
+    elif _jm_score >= 55:
+        _jm_strength = "moderate"
+    elif _jm_score >= 35:
+        _jm_strength = "weak"
+    else:
+        _jm_strength = "poor"
+
+    # Identify the biggest gap area
+    if len(_jm_hard_missing) >= 4:
+        _jm_gap_area = "hard_skills"
+    elif base["hard_filter_hits"]:
+        _jm_gap_area = "hard_filters"
+    elif len(_jm_missing) >= 6:
+        _jm_gap_area = "keyword_coverage"
+    else:
+        _jm_gap_area = "none"
+
     return ToolResponse(
         recommendation=base["recommendation"],
         confidence=base["confidence"],
@@ -3317,6 +3755,15 @@ def run_job_match(payload: ToolRequest) -> ToolResponse:
             "skills_comparison": base["skills_comparison"],
             "searchability": base["searchability"],
             "recruiter_tips": base["recruiter_tips"],
+            "match_quality": {
+                "strength": _jm_strength,
+                "hard_skills_matched": len(_jm_hard_matched),
+                "hard_skills_missing": len(_jm_hard_missing),
+                "soft_skills_matched": len(_jm_soft_matched),
+                "total_terms_evaluated": _jm_total,
+                "biggest_gap_area": _jm_gap_area,
+                "top_missing_hard_skills": _jm_hard_missing[:5],
+            },
         },
     )
 
@@ -3349,11 +3796,32 @@ def run_missing_keywords(payload: ToolRequest) -> ToolResponse:
         )
     ]
 
-    suggestions: list[dict[str, str]] = []
-    for term in actionable_terms[:10]:
+    # Count JD occurrences to determine keyword importance
+    _jd_tokens_mk = _tokenize(payload.job_description_text)
+    _jd_term_counts: Counter = Counter(_jd_tokens_mk)
+
+    # Sort actionable terms by priority: frequency in JD + group weight
+    _group_priority = {"tooling": 3, "domain": 2, "core_role": 1, "hard_filters": 0}
+    actionable_terms.sort(
+        key=lambda t: (_group_priority.get(_group_keyword(t), 0), _jd_term_counts.get(t, 0)),
+        reverse=True,
+    )
+
+    suggestions: list[dict[str, Any]] = []
+    for idx, term in enumerate(actionable_terms[:10]):
         group = _group_keyword(term)
         jd_evidence = (base.get("missing_term_context") or {}).get(term, [])
         evidence_hint = jd_evidence[0] if jd_evidence else ""
+        jd_freq = _jd_term_counts.get(term, 0)
+
+        # Priority: high if mentioned 3+ times in JD or is a tool/domain term
+        if jd_freq >= 3 or group == "tooling":
+            priority = "high"
+        elif jd_freq >= 2 or group == "domain":
+            priority = "medium"
+        else:
+            priority = "low"
+
         if group == "tooling":
             section = "skills + experience"
             guidance = f"{_msg(locale, 'insert_skill', term=term)} {_msg(locale, 'insert_exp', term=term)}"
@@ -3365,7 +3833,14 @@ def run_missing_keywords(payload: ToolRequest) -> ToolResponse:
             guidance = _msg(locale, "insert_exp", term=term)
         if evidence_hint:
             guidance = f"{guidance} JD evidence: {evidence_hint}"
-        suggestions.append({"keyword": term, "insert_in": section, "guidance": guidance})
+        suggestions.append({
+            "keyword": term,
+            "insert_in": section,
+            "guidance": guidance,
+            "priority": priority,
+            "jd_frequency": jd_freq,
+            "group": group,
+        })
 
     used_llm_suggestions = False
     llm_payload = json_completion(
@@ -3583,32 +4058,75 @@ def run_cover_letter(payload: ToolRequest) -> ToolResponse:
     role_hint = ", ".join(base["matched_terms"][:2]) or "business impact"
     improvement = ", ".join(base["missing_terms"][:2]) or "role terms"
 
+    # Extract seniority and evidence for personalization
+    _cl_seniority = payload.candidate_profile.seniority or "mid"
+    _cl_years = _seniority_to_years(_cl_seniority)
+    _cl_top_skills = ", ".join(base["matched_terms"][:5]) or "my core skills"
+    _cl_missing_top = ", ".join(base["missing_terms"][:3])
+
+    # Build mode-differentiated letters with real content variation
     letters = {}
-    for mode_key, mode_label in mode_map.items():
-        letters[mode_key] = (
-            f"{mode_label}\n\n{_msg(locale, 'cover_greeting')}\n"
-            f"{_msg(locale, 'cover_p1', top_match=top_match)}\n\n"
-            f"{_msg(locale, 'cover_p2', role_hint=role_hint, improvement=improvement)}\n\n"
-            f"{_msg(locale, 'cover_closing')}"
-        )
+
+    # Recruiter version: brief, scannable, focuses on fit signals
+    letters["recruiter"] = (
+        f"{mode_map['recruiter']}\n\n{_msg(locale, 'cover_greeting')}\n"
+        f"With {_cl_years}+ years of experience and proven skills in {top_match}, "
+        f"I am a strong fit for this role.\n\n"
+        f"Key alignment: {_cl_top_skills}. "
+        f"My experience directly maps to your core requirements, "
+        f"and I am eager to bring measurable results to your team.\n\n"
+        f"{_msg(locale, 'cover_closing')}"
+    )
+
+    # HR version: balanced, mentions culture fit and growth mindset
+    letters["hr"] = (
+        f"{mode_map['hr']}\n\n{_msg(locale, 'cover_greeting')}\n"
+        f"I bring {_cl_years}+ years of experience with a focus on {top_match}. "
+        f"Beyond technical fit, I value collaboration, continuous learning, "
+        f"and contributing to a positive team culture.\n\n"
+        f"{_msg(locale, 'cover_p1', top_match=top_match)}\n\n"
+        + (f"I am also actively developing expertise in {_cl_missing_top} "
+           f"to ensure full alignment with your team's evolving needs.\n\n" if _cl_missing_top else "")
+        + f"{_msg(locale, 'cover_closing')}"
+    )
+
+    # Technical version: specific, mentions tools, architecture, and impact
+    letters["technical"] = (
+        f"{mode_map['technical']}\n\n{_msg(locale, 'cover_greeting')}\n"
+        f"As a {_cl_seniority}-level professional with deep experience in {top_match}, "
+        f"I have delivered production-grade solutions that directly align with your requirements.\n\n"
+        f"{_msg(locale, 'cover_p1', top_match=top_match)}\n\n"
+        f"{_msg(locale, 'cover_p2', role_hint=role_hint, improvement=improvement)}\n\n"
+        f"{_msg(locale, 'cover_closing')}"
+    )
     generation_mode = "heuristic"
     generation_scope = "heuristic"
 
     llm_payload = json_completion(
         system_prompt=(
-            "You write concise job application cover letters. "
+            "You write concise, personalized job application cover letters. "
+            "Each letter must reference specific skills, projects, or achievements from the resume. "
+            "Never invent facts, companies, certifications, or metrics not found in the resume. "
             "Return strict JSON only."
         ),
         user_prompt=(
             f"Language: {_locale_language_name(locale)}.\n"
-            "Create 3 versions of a cover letter using only user-provided evidence.\n"
-            "Do not invent companies, years, certifications, or outcomes.\n"
-            "Each version must be 80-140 words and practical.\n"
+            "Create 3 distinct versions of a cover letter.\n"
+            "Each version must be 80-140 words and clearly differentiated:\n"
+            "- recruiter: brief, scannable, emphasizes fit signals and key metrics\n"
+            "- hr: balanced, mentions culture fit, collaboration, and growth mindset\n"
+            "- technical: specific, mentions tools/architecture/impact with technical depth\n\n"
+            "Rules:\n"
+            "- Reference specific skills and achievements from the resume\n"
+            "- Do not invent companies, years, certifications, or outcomes\n"
+            "- Each version must feel genuinely different in tone and focus\n"
+            "- Avoid clichés like 'passionate', 'results-driven', 'team player'\n\n"
             "JSON schema:\n"
             "{"
             "\"letters\": {\"recruiter\": \"...\", \"hr\": \"...\", \"technical\": \"...\"},"
             "\"default_mode\": \"technical\""
             "}\n\n"
+            f"Candidate seniority: {_cl_seniority}, ~{_cl_years} years experience\n"
             f"Resume:\n{payload.resume_text[:3500]}\n\n"
             f"Job description:\n{payload.job_description_text[:3500]}\n\n"
             f"Matched terms: {', '.join(base['matched_terms'][:12])}\n"
@@ -3674,31 +4192,89 @@ def run_interview_predictor(payload: ToolRequest) -> ToolResponse:
     locale = payload.locale
     questions: list[dict[str, str]] = []
 
-    for term in base["missing_terms"][:4]:
+    # 1) Technical skill-gap questions from missing terms (filter out low-signal terms)
+    _ip_actionable_missing = [
+        t for t in base["missing_terms"]
+        if t not in LOW_SIGNAL_TERMS and t not in STOPWORDS and t not in WORK_MODE_TERMS
+        and t not in LOW_SIGNAL_KEYWORD_TERMS and len(t) > 2
+    ]
+    for term in _ip_actionable_missing[:3]:
         questions.append({
             "question": _msg(locale, "interview_missing_q", term=term),
             "reason": _msg(locale, "interview_missing_r"),
             "framework": _msg(locale, "framework_star"),
+            "category": "technical",
         })
+
+    # 2) Behavioral questions based on matched skills (prove depth — filter low-signal)
+    _ip_actionable_matched = [
+        t for t in base["matched_terms"]
+        if t not in LOW_SIGNAL_TERMS and t not in STOPWORDS and len(t) > 2
+    ]
+    for term in _ip_actionable_matched[:2]:
+        questions.append({
+            "question": f"Describe a challenging project where you applied {term}. What trade-offs did you make?",
+            "reason": f"Your resume lists {term} — interviewers will probe for real depth and decision-making.",
+            "framework": "STAR + tradeoff analysis",
+            "category": "behavioral",
+        })
+
+    # 3) Seniority/leadership questions if gap detected
     if any(r.type == "seniority" for r in base["risks"]):
         questions.append({
             "question": _msg(locale, "interview_seniority_q"),
             "reason": _msg(locale, "interview_seniority_r"),
             "framework": _msg(locale, "framework_star_tradeoff"),
+            "category": "leadership",
         })
+
+    # 4) Evidence/impact question if evidence gap detected
+    if any(r.type == "evidence_gap" for r in base["risks"]):
+        questions.append({
+            "question": "What is the most measurable impact you delivered in your last role? How was it measured?",
+            "reason": "Your resume has limited quantified achievements — interviewers will probe for concrete metrics.",
+            "framework": "STAR with metrics",
+            "category": "behavioral",
+        })
+
+    # 5) Situational question (always relevant)
+    if len(questions) < 6:
+        questions.append({
+            "question": "Tell me about a time you had to deliver under tight constraints. What did you prioritize and what did you cut?",
+            "reason": "Situational questions assess real-world judgment and prioritization under pressure.",
+            "framework": "STAR + tradeoff analysis",
+            "category": "situational",
+        })
+
     if not questions:
         questions.append({
             "question": _msg(locale, "interview_fallback_q"),
             "reason": _msg(locale, "interview_fallback_r"),
             "framework": _msg(locale, "framework_star"),
+            "category": "general",
         })
-    red_flags = [_msg(locale, "red_flag_1"), _msg(locale, "red_flag_2")]
+
+    # Build resume-specific red flags instead of static ones
+    red_flags: list[str] = []
+    _ip_resume_lower = payload.resume_text.lower()
+    if any(r.type == "hard_filter" and r.severity == "high" for r in base["risks"]):
+        red_flags.append("Hard-filter gaps (visa, degree, clearance) may disqualify before interview — address preemptively.")
+    if base["scores"].job_match < 50:
+        red_flags.append(f"Job match is only {base['scores'].job_match}% — prepare to explain transferable skills and bridge the gap.")
+    if any(pattern.search(_ip_resume_lower) for pattern in _WEAK_CLAIM_PATTERNS):
+        red_flags.append("Resume contains passive phrasing ('responsible for', 'assisted with') — interviewers may question ownership.")
+    if len(base["missing_terms"]) >= 8:
+        red_flags.append(f"{len(base['missing_terms'])} key terms from the JD are missing — expect deep probing on these skill areas.")
+    if not red_flags:
+        red_flags = [_msg(locale, "red_flag_1"), _msg(locale, "red_flag_2")]
     generation_mode = "heuristic"
     generation_scope = "heuristic"
 
     llm_payload = json_completion(
         system_prompt=(
-            "You are an interview preparation assistant. "
+            "You are an expert interview preparation assistant. "
+            "Generate realistic questions an interviewer would actually ask based on the resume and JD. "
+            "Each question should target a specific concern or validation point. "
             "Return strict JSON only."
         ),
         user_prompt=(
@@ -3706,19 +4282,25 @@ def run_interview_predictor(payload: ToolRequest) -> ToolResponse:
             "Generate interview prep from resume vs job description.\n"
             "Return only JSON schema:\n"
             "{"
-            "\"predicted_questions\": [{\"question\":\"...\",\"reason\":\"...\",\"framework\":\"STAR|STAR + tradeoff|Technical deep dive\"}],"
+            "\"predicted_questions\": [{\"question\":\"...\",\"reason\":\"...\",\"framework\":\"STAR|STAR + tradeoff|Technical deep dive\",\"category\":\"technical|behavioral|situational|leadership\"}],"
             "\"red_flag_preview\": [\"...\", \"...\"]"
             "}\n"
-            "Provide 4-6 predicted questions. Keep each question under 25 words.\n"
-            "Do not invent facts. Use only user-provided information.\n\n"
+            "Rules:\n"
+            "- Provide 5-7 predicted questions with a mix of categories\n"
+            "- At least 1 technical, 1 behavioral, 1 situational question\n"
+            "- Keep each question under 25 words\n"
+            "- reason must explain WHY this question will be asked based on resume/JD gap\n"
+            "- red_flag_preview: 2-4 specific concerns an interviewer will have based on THIS resume\n"
+            "- Do not invent facts. Use only user-provided information.\n\n"
             f"Resume:\n{payload.resume_text[:3500]}\n\n"
             f"Job description:\n{payload.job_description_text[:3500]}\n\n"
             f"Matched terms: {', '.join(base['matched_terms'][:12])}\n"
             f"Missing terms: {', '.join(base['missing_terms'][:12])}\n"
             f"Risks: {', '.join([f'{r.type}:{r.severity}' for r in base['risks']])}\n"
+            f"Job match score: {base['scores'].job_match}%\n"
         ),
         temperature=0.2,
-        max_output_tokens=1000,
+        max_output_tokens=1100,
     )
     if llm_payload:
         parsed_questions = _safe_question_items(llm_payload.get("predicted_questions"), max_items=6)
@@ -4481,19 +5063,20 @@ def _detect_pdf_layout_profile(
 
     profile = _infer_layout_profile_from_text(extracted_text, source_type="pdf")
     total = len(line_starts)
-    if total >= 24:
-        left = sum(1 for value in line_starts if value <= 0.40)
-        middle = sum(1 for value in line_starts if 0.40 < value < 0.57)
-        right = sum(1 for value in line_starts if value >= 0.57)
+    if total >= 12:  # lowered from 24 — even short resumes can be multi-column
+        left = sum(1 for value in line_starts if value <= 0.42)
+        middle = sum(1 for value in line_starts if 0.42 < value < 0.55)
+        right = sum(1 for value in line_starts if value >= 0.55)
         left_ratio = left / total
         right_ratio = right / total
         middle_ratio = middle / total
-        if left_ratio >= 0.38 and right_ratio >= 0.18 and right >= 8 and middle_ratio <= 0.26:
+        # Strong multi-column: clear left and right clusters with sparse middle
+        if left_ratio >= 0.32 and right_ratio >= 0.15 and right >= 4 and middle_ratio <= 0.30:
             profile["detected_layout"] = "multi_column"
             profile["column_count"] = 2
             profile["confidence"] = max(float(profile.get("confidence", 0.6)), 0.82)
             profile["signals"] = list(dict.fromkeys([*profile.get("signals", []), "pdf_two_column_x_bands"]))
-        elif left_ratio >= 0.34 and right_ratio >= 0.10 and right >= 5 and middle_ratio <= 0.34:
+        elif left_ratio >= 0.28 and right_ratio >= 0.08 and right >= 3 and middle_ratio <= 0.38:
             profile["detected_layout"] = "hybrid"
             profile["column_count"] = max(2, int(profile.get("column_count", 1)))
             profile["confidence"] = max(float(profile.get("confidence", 0.55)), 0.68)
@@ -5169,36 +5752,259 @@ def run_additional_tool(payload: ToolRequest, tool_slug: str) -> ToolResponse:
     elif canonical_tool_slug == "seniority-calibration-tool":
         required_years = _clamp_int(tool_inputs.get("required_years"), default=max((int(x) for x in YEARS_RE.findall(payload.job_description_text.lower())), default=0), min_value=0, max_value=40)
         gap = required_years - years_input
+
+        # Detect if years requirement is preferred vs hard-required
+        _jd_lower_sc = payload.job_description_text.lower()
+        _sc_years_preferred = bool(re.search(
+            r"(?:prefer(?:red|ably)?|ideal(?:ly)?|nice\s+to\s+have|bonus|desired|typically)\s+.{0,30}\d{1,2}\+?\s*(?:years|yrs)",
+            _jd_lower_sc,
+        )) or bool(re.search(
+            r"\d{1,2}\+?\s*(?:years|yrs)\s+.{0,20}(?:prefer|ideal|desired|bonus|nice)",
+            _jd_lower_sc,
+        ))
+
+        # Nuanced classification with wider aligned band for preferred requirements
+        _sc_align_buffer = 3 if _sc_years_preferred else 1
+        _sc_over_buffer = -5 if _sc_years_preferred else -3
+        if gap > _sc_align_buffer:
+            _sc_classification = "underqualified"
+        elif gap < _sc_over_buffer:
+            _sc_classification = "overqualified"
+        elif gap > 0:
+            _sc_classification = "slightly_under"
+        elif gap < -2:
+            _sc_classification = "slightly_over"
+        else:
+            _sc_classification = "aligned"
+
+        # Detect leadership/scope signals in resume to provide evidence-based actions
+        _sc_resume_lower = payload.resume_text.lower()
+        _sc_leadership_signals = sum(1 for kw in (
+            "led", "managed", "directed", "mentored", "architected", "spearheaded",
+            "coordinated", "supervised", "owned", "drove", "established",
+        ) if re.search(rf"\b{kw}\b", _sc_resume_lower))
+        _sc_scope_signals = sum(1 for kw in (
+            "team of", "cross-functional", "organization", "company-wide",
+            "end-to-end", "full lifecycle", "budget", "revenue", "headcount",
+        ) if kw in _sc_resume_lower)
+
+        # Build contextual actions based on classification and evidence
+        _sc_actions: list[str] = []
+        if _sc_classification in ("underqualified", "slightly_under"):
+            if _sc_leadership_signals < 2:
+                _sc_actions.append("Add leadership evidence: mention team sizes, mentorship, or cross-team coordination you led.")
+            if _sc_scope_signals < 2:
+                _sc_actions.append("Quantify project scope: include budget, user count, or revenue impact to demonstrate senior-level ownership.")
+            _sc_actions.append(f"Bridge the {abs(gap)}-year gap by highlighting accelerated growth: promotions, expanded responsibilities, or stretch projects.")
+            if _sc_years_preferred:
+                _sc_actions.append("This is a preferred (not required) requirement — strong evidence of impact can offset the gap.")
+        elif _sc_classification in ("overqualified", "slightly_over"):
+            _sc_actions.append("Tailor your headline to match the role level — avoid titles that signal a higher tier than the position.")
+            _sc_actions.append("Emphasize hands-on contributions over management to avoid appearing too senior for the role scope.")
+            if abs(gap) >= 5:
+                _sc_actions.append("Consider whether this role aligns with your career trajectory, or if you should target a higher-level position.")
+        else:
+            _sc_actions.append("Your experience level aligns well — focus on showcasing depth in the specific skills the role requires.")
+            if _sc_leadership_signals >= 3:
+                _sc_actions.append("Strong leadership evidence detected. Highlight 1-2 best ownership stories in your summary.")
+
         details["seniority_calibration"] = {
             "candidate_years_signal": years_input,
             "required_years_signal": required_years,
             "gap_years": gap,
-            "classification": "underqualified" if gap > 1 else "overqualified" if gap < -3 else "aligned",
-            "actions": [
-                "Adjust headline to align level with role scope.",
-                "Show scope and ownership in 2 recent projects.",
-            ],
+            "classification": _sc_classification,
+            "years_is_preferred": _sc_years_preferred,
+            "leadership_signals": _sc_leadership_signals,
+            "scope_signals": _sc_scope_signals,
+            "actions": _sc_actions[:4],
         }
     elif canonical_tool_slug == "rejection-reason-classifier":
-        ranked = sorted(base["risks"], key=lambda risk: (1 if risk.severity == "high" else 0), reverse=True)
-        details["rejection_reasons"] = [
-            {"type": risk.type, "severity": risk.severity, "reason": risk.message}
-            for risk in ranked[:4]
-        ]
-        details["top_likely_rejection"] = ranked[0].type if ranked else "keyword_gap"
+        ranked = sorted(base["risks"], key=lambda risk: (
+            2 if risk.severity == "high" else 1 if risk.severity == "medium" else 0
+        ), reverse=True)
+
+        # Build probability-weighted rejection reasons with recovery actions
+        _rr_job_match = base["scores"].job_match
+        _rr_ats_read = base["scores"].ats_readability
+        _rr_reasons: list[dict[str, Any]] = []
+
+        # Assign realistic probability based on risk type, severity, and scores
+        _rr_base_probs: dict[str, float] = {
+            "hard_filter": 0.85,
+            "keyword_gap": 0.55,
+            "parsing": 0.40,
+            "seniority": 0.50,
+            "evidence_gap": 0.35,
+        }
+        _rr_recovery_map: dict[str, str] = {
+            "hard_filter": "Address hard-filter requirements explicitly: add visa status, required degree, or clearance to your resume header.",
+            "keyword_gap": "Add the top 5-8 missing keywords naturally into your experience bullets and skills section.",
+            "parsing": "Switch to a single-column, ATS-friendly format without tables, graphics, or headers/footers.",
+            "seniority": "Bridge the experience gap by quantifying leadership scope, accelerated growth, or stretch assignments.",
+            "evidence_gap": "Add 3-5 quantified achievement bullets with metrics (%, $, time saved, scale) to your recent experience.",
+        }
+
+        for risk in ranked[:6]:
+            _rr_prob = _rr_base_probs.get(risk.type, 0.30)
+            # Adjust probability based on match scores
+            if risk.type == "keyword_gap":
+                _rr_prob = min(0.90, _rr_prob + (1.0 - _rr_job_match / 100) * 0.30)
+            elif risk.type == "parsing":
+                _rr_prob = min(0.85, _rr_prob + (1.0 - _rr_ats_read / 100) * 0.30)
+            if risk.severity == "high":
+                _rr_prob = min(0.95, _rr_prob + 0.15)
+            elif risk.severity == "low":
+                _rr_prob = max(0.10, _rr_prob - 0.15)
+
+            _rr_reasons.append({
+                "type": risk.type,
+                "severity": risk.severity,
+                "reason": risk.message,
+                "rejection_probability": round(_rr_prob, 2),
+                "recovery_action": _rr_recovery_map.get(risk.type, "Review and strengthen this area of your resume with specific evidence."),
+            })
+
+        # If no risks found, still provide useful feedback
+        if not _rr_reasons:
+            _rr_reasons.append({
+                "type": "keyword_gap",
+                "severity": "medium",
+                "reason": "No major risks detected, but keyword alignment could be improved for stronger ATS performance.",
+                "rejection_probability": 0.20,
+                "recovery_action": "Ensure your resume mirrors the exact terminology used in the job description.",
+            })
+
+        # Calculate overall rejection risk
+        _rr_overall = max((r["rejection_probability"] for r in _rr_reasons), default=0.20) if _rr_reasons else 0.20
+        _rr_stage = "ATS automated screen" if any(r["type"] in ("hard_filter", "parsing", "keyword_gap") and r["severity"] == "high" for r in _rr_reasons) else "recruiter review"
+
+        details["rejection_reasons"] = _rr_reasons
+        details["top_likely_rejection"] = _rr_reasons[0]["type"] if _rr_reasons else "keyword_gap"
+        details["overall_rejection_risk"] = round(_rr_overall, 2)
+        details["likely_rejection_stage"] = _rr_stage
+        details["recovery_priority"] = [r["type"] for r in sorted(_rr_reasons, key=lambda x: x["rejection_probability"], reverse=True)][:3]
     elif canonical_tool_slug == "cv-region-translator":
         region_mode = _safe_str(tool_inputs.get("region_mode"), max_len=20).lower() or "eu"
+
+        # Region-specific formatting rules based on actual hiring conventions
+        _REGION_RULES: dict[str, dict[str, Any]] = {
+            "us": {
+                "format_rules": [
+                    "Use reverse-chronological format — most US recruiters scan recent experience first.",
+                    "Keep to 1 page for <10 years experience, 2 pages max for senior roles.",
+                    "Do NOT include photo, date of birth, marital status, or nationality — these create legal liability.",
+                    "Use standard section headings: Summary, Experience, Skills, Education.",
+                    "Quantify achievements with $ and % metrics — US hiring heavily weights measurable impact.",
+                ],
+                "required_adaptations": [
+                    "Remove any personal data fields (age, gender, photo) — US anti-discrimination laws discourage this.",
+                    "Use MM/YYYY date format for employment periods.",
+                    "Replace 'CV' with 'Resume' in file naming and headers.",
+                    "Spell-check for US English (e.g., 'optimize' not 'optimise', 'color' not 'colour').",
+                ],
+                "date_format": "MM/YYYY",
+                "photo_expected": False,
+                "typical_length": "1-2 pages",
+            },
+            "eu": {
+                "format_rules": [
+                    "Europass format is accepted in many EU countries but not required — tailor to the specific country.",
+                    "2 pages is standard; some countries (Germany) accept 3 pages for senior roles.",
+                    "Include a professional photo in Germany, Austria, Switzerland; omit in UK, Ireland, Nordics.",
+                    "List languages with proficiency levels (B2, C1) — multilingual ability is highly valued in EU roles.",
+                    "Use reverse-chronological format with clear section separation.",
+                ],
+                "required_adaptations": [
+                    "Use DD/MM/YYYY date format (or DD.MM.YYYY in DACH region).",
+                    "Add nationality/work permit status if relevant for EU right-to-work.",
+                    "Translate or localize role titles to match local job market terminology.",
+                    "Include a 'Languages' section with CEFR proficiency levels if applicable.",
+                ],
+                "date_format": "DD/MM/YYYY",
+                "photo_expected": True,
+                "typical_length": "2 pages",
+            },
+            "uk": {
+                "format_rules": [
+                    "Use 'CV' not 'Resume' — standard UK terminology.",
+                    "2 pages is the UK standard; 1 page is too brief, 3+ is excessive.",
+                    "Do NOT include photo, age, or marital status — UK equality laws discourage personal details.",
+                    "Start with a strong personal statement (3-4 lines) tailored to the specific role.",
+                    "List achievements with metrics; UK recruiters value commercial awareness and impact evidence.",
+                ],
+                "required_adaptations": [
+                    "Use DD/MM/YYYY date format.",
+                    "Spell-check for British English (e.g., 'organisation', 'analyse', 'programme').",
+                    "Include right-to-work status if you are not a UK/Irish citizen.",
+                    "Reference availability and notice period if relevant.",
+                ],
+                "date_format": "DD/MM/YYYY",
+                "photo_expected": False,
+                "typical_length": "2 pages",
+            },
+            "mena": {
+                "format_rules": [
+                    "Include a professional photo — standard practice in most MENA countries.",
+                    "Add nationality, visa status, and date of birth — commonly expected in Gulf region applications.",
+                    "2-3 pages is acceptable; detail is valued over brevity in this region.",
+                    "Highlight certifications and education prominently — formal credentials carry significant weight.",
+                    "Include a 'References' section or note 'Available upon request' — frequently expected.",
+                ],
+                "required_adaptations": [
+                    "Add personal details: nationality, DOB, visa/residence status.",
+                    "Use DD/MM/YYYY date format.",
+                    "List driving license status if relevant (common requirement in Gulf roles).",
+                    "Emphasize multinational experience and language skills (Arabic/English proficiency).",
+                ],
+                "date_format": "DD/MM/YYYY",
+                "photo_expected": True,
+                "typical_length": "2-3 pages",
+            },
+            "apac": {
+                "format_rules": [
+                    "Format varies significantly by country: Japan/Korea expect very structured formats; Australia/Singapore are closer to US style.",
+                    "Photo is expected in Japan, Korea, and China; not expected in Australia, NZ, or Singapore.",
+                    "Keep to 2 pages for most APAC markets; Japan may expect a specific rirekisho template.",
+                    "Highlight cross-cultural experience and language proficiency where relevant.",
+                    "Certifications and educational institution prestige carry extra weight in many APAC markets.",
+                ],
+                "required_adaptations": [
+                    "Adapt date format to target country convention (YYYY/MM for Japan, DD/MM/YYYY for Australia).",
+                    "Include visa/work authorization status — work permits are a key hiring factor across APAC.",
+                    "For Japan/Korea: use formal tone, include personal data (DOB, nationality); for Australia/NZ: omit personal data.",
+                    "Translate key achievements into local business context where possible.",
+                ],
+                "date_format": "varies by country",
+                "photo_expected": True,
+                "typical_length": "1-2 pages",
+            },
+            "latam": {
+                "format_rules": [
+                    "Include a professional photo — common practice in most Latin American countries.",
+                    "Add personal details: nationality, DOB, and ID number may be expected in some countries.",
+                    "2 pages is standard; use reverse-chronological format.",
+                    "Emphasize education and certifications — formal credentials are highly valued.",
+                    "Language skills (especially English proficiency level) should be prominently listed.",
+                ],
+                "required_adaptations": [
+                    "Use DD/MM/YYYY date format.",
+                    "Include personal data (nationality, marital status) if applying in traditional markets like Brazil or Mexico.",
+                    "Add language proficiency levels for English and any other relevant languages.",
+                    "Localize role titles and company descriptions for the target market.",
+                ],
+                "date_format": "DD/MM/YYYY",
+                "photo_expected": True,
+                "typical_length": "2 pages",
+            },
+        }
+        _region_data = _REGION_RULES.get(region_mode, _REGION_RULES.get("eu", {}))
         details["region_translation"] = {
             "mode": region_mode,
-            "format_rules": [
-                "Use reverse-chronological experience.",
-                "Keep profile concise and evidence-backed.",
-                "Match role titles to local market wording.",
-            ],
-            "required_adaptations": [
-                "Adjust date format and section naming.",
-                "Tune summary tone for regional expectations.",
-            ],
+            "format_rules": _region_data.get("format_rules", ["Use reverse-chronological experience.", "Keep profile concise and evidence-backed."]),
+            "required_adaptations": _region_data.get("required_adaptations", ["Adapt date format and section naming for target region."]),
+            "date_format": _region_data.get("date_format", "DD/MM/YYYY"),
+            "photo_expected": _region_data.get("photo_expected", False),
+            "typical_length": _region_data.get("typical_length", "2 pages"),
         }
 
     # Always provide these core quality signals for resume/career tools.
