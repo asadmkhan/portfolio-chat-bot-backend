@@ -11,6 +11,7 @@ from app.api.v1.health import router as health_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.actions import router as actions_router
+from app.api.v1.tools import router as tools_router
 from app.core.cors import DEV_ALLOWED_ORIGINS
 from app.core.rate_limit import limiter
 from app.core.config import settings
@@ -39,3 +40,4 @@ app.include_router(health_router, prefix="/v1", tags=["Health"])
 app.include_router(chat_router, prefix="/v1", tags=["Chat"])
 app.include_router(analytics_router, prefix="/v1", tags=["Analytics"])
 app.include_router(actions_router, prefix="/v1", tags=["Actions"])
+app.include_router(tools_router, prefix="/v1", tags=["Tools"])

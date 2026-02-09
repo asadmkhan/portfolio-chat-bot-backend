@@ -4,5 +4,8 @@ DEV_ALLOWED_ORIGINS = [
     "http://[::1]:5173",
     "http://localhost:3000",
     "https://www.codedbyasad.com",
-    "https://*.vercel.app"
+    "https://codedbyasad.com",
+    "https://safetysurfer.com",
+    "https://www.safetysurfer.com",
+    "https://*.vercel.app",
 ]

@@ -6,6 +6,9 @@ __pycache__/
 data/faiss/
 data/documents/**/generated/
 data/analytics.db
+data/tools_rate_limit.db
+data/tools_rate_limit.db-shm
+data/tools_rate_limit.db-wal
 *.log
 secrets/
 

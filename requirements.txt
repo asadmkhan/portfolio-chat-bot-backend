@@ -6,7 +6,16 @@ pydantic
 python-dotenv
 openai
 httpx
+beautifulsoup4
+readability-lxml
 slowapi
 sentry-sdk
 google-api-python-client
 google-auth
+pypdf
+python-docx
+python-pptx
+youtube-transcript-api
+Pillow
+python-multipart
+defusedxml

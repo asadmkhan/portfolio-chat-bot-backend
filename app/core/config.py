@@ -44,6 +44,7 @@ class Settings:
     mmr_lambda: float
     analytics_enabled: bool
     analytics_db_path: str
+    tools_rate_limit_db_path: str
     min_chunk_score: float
     contact_email: str
     contact_linkedin: str
@@ -74,6 +75,7 @@ settings = Settings(
     mmr_lambda=float(_get_env("MMR_LAMBDA", "0.7") or "0.7"),
     analytics_enabled=_get_env_bool("ANALYTICS_ENABLED", True),
     analytics_db_path=_get_env("ANALYTICS_DB_PATH", "data/analytics.db") or "data/analytics.db",
+    tools_rate_limit_db_path=_get_env("TOOLS_RATE_LIMIT_DB_PATH", "data/tools_rate_limit.db") or "data/tools_rate_limit.db",
     min_chunk_score=float(_get_env("MIN_CHUNK_SCORE", "0.25") or "0.25"),
     contact_email=_get_env("CONTACT_EMAIL", "contact@codedbyasad.com") or "contact@codedbyasad.com",
     contact_linkedin=_get_env("CONTACT_LINKEDIN", "https://www.linkedin.com/in/asadmkhan") or "https://www.linkedin.com/in/asadmkhan",
