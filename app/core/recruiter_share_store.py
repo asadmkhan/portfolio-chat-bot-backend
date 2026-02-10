@@ -73,27 +73,34 @@ def create_recruiter_share(*, tool_slug: str, locale: str, result_payload: dict[
     ttl_days = max(1, int(settings.recruiter_share_ttl_days))
     created_at = _utc_now()
     expires_at = created_at + timedelta(days=ttl_days)
-    share_id = secrets.token_urlsafe(9)
     payload_json = json.dumps(result_payload, ensure_ascii=False)
+    entropy_bytes = max(16, int(settings.strict_share_id_entropy_bytes))
 
     with _conn_lock:
-        conn.execute(
-            """
-            INSERT INTO recruiter_share_records (
-                share_id, tool_slug, locale, result_payload_json, created_at, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                share_id,
-                tool_slug,
-                locale,
-                payload_json,
-                created_at.isoformat(),
-                expires_at.isoformat(),
-            ),
-        )
-        conn.commit()
-    return share_id, expires_at
+        for _ in range(8):
+            share_id = secrets.token_urlsafe(entropy_bytes)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO recruiter_share_records (
+                        share_id, tool_slug, locale, result_payload_json, created_at, expires_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        share_id,
+                        tool_slug,
+                        locale,
+                        payload_json,
+                        created_at.isoformat(),
+                        expires_at.isoformat(),
+                    ),
+                )
+                conn.commit()
+                return share_id, expires_at
+            except sqlite3.IntegrityError:
+                continue
+
+    raise RuntimeError("Unable to allocate a unique share ID after multiple attempts.")
 
 
 def get_recruiter_share(share_id: str) -> dict[str, Any] | None:
@@ -122,4 +129,3 @@ def get_recruiter_share(share_id: str) -> dict[str, Any] | None:
         "created_at": datetime.fromisoformat(row[4]),
         "expires_at": datetime.fromisoformat(row[5]),
     }
-

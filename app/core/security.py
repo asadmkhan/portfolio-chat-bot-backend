@@ -24,7 +24,7 @@ def _auth_error_message(lang: str | None) -> str:
 
 
 def check_api_key(x_api_key: str | None, lang: str | None = None) -> None:
-    if not settings.api_key:
+    if settings.chat_auth_mode != "protected":
         return
     if x_api_key != settings.api_key:
         raise HTTPException(

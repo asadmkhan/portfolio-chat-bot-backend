@@ -53,7 +53,30 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_analysis_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                tool_slug TEXT NOT NULL,
+                model TEXT NOT NULL,
+                strict_mode INTEGER NOT NULL,
+                schema_valid INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                error_code TEXT,
+                latency_ms INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_ai_analysis_runs_created_at
+            ON ai_analysis_runs (created_at)
+            """
+        )
         conn.commit()
+    purge_old_records()
 
 
 def log_chat_event(
@@ -124,6 +147,75 @@ def log_feedback(
             ),
         )
         conn.commit()
+
+
+def log_ai_analysis_run(
+    *,
+    run_id: str,
+    tool_slug: str,
+    model: str,
+    strict_mode: bool,
+    schema_valid: bool,
+    status: str,
+    error_code: str | None = None,
+    latency_ms: int | None = None,
+) -> None:
+    if not settings.analytics_enabled:
+        return
+    db_path = _get_db_path()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO ai_analysis_runs (
+                created_at, run_id, tool_slug, model, strict_mode, schema_valid, status, error_code, latency_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _utc_now(),
+                run_id,
+                tool_slug,
+                model,
+                1 if strict_mode else 0,
+                1 if schema_valid else 0,
+                status,
+                error_code,
+                latency_ms,
+            ),
+        )
+        conn.commit()
+
+
+def purge_old_records() -> dict[str, int]:
+    if not settings.analytics_enabled:
+        return {"analytics_events": 0, "feedback": 0, "ai_analysis_runs": 0}
+
+    db_path = _get_db_path()
+    analytics_retention = max(1, int(settings.analytics_retention_days))
+    feedback_retention = max(1, int(settings.feedback_retention_days))
+    ai_retention = analytics_retention
+
+    deleted = {"analytics_events": 0, "feedback": 0, "ai_analysis_runs": 0}
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM analytics_events WHERE created_at < datetime('now', ?)",
+            (f"-{analytics_retention} days",),
+        )
+        deleted["analytics_events"] = int(cur.rowcount or 0)
+
+        cur = conn.execute(
+            "DELETE FROM feedback WHERE created_at < datetime('now', ?)",
+            (f"-{feedback_retention} days",),
+        )
+        deleted["feedback"] = int(cur.rowcount or 0)
+
+        cur = conn.execute(
+            "DELETE FROM ai_analysis_runs WHERE created_at < datetime('now', ?)",
+            (f"-{ai_retention} days",),
+        )
+        deleted["ai_analysis_runs"] = int(cur.rowcount or 0)
+        conn.commit()
+
+    return deleted
 
 
 def _row_to_dict(cursor: sqlite3.Cursor, row: tuple) -> dict[str, Any]:

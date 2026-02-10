@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
 
+from app.core.config import settings
 from app.core.recruiter_share_store import create_recruiter_share, get_recruiter_share
 from app.core.tools_rate_limit import ToolsRateLimitExceeded, enforce_tools_rate_limit
 from app.schemas.recruiter import (
@@ -31,6 +32,7 @@ from app.schemas.recruiter import (
 )
 from app.services.recruiter_service import (
     RecruiterQualityError,
+    redact_share_payload,
     run_ats_vs_human,
     run_hiring_bias_risk_detector,
     run_jd_market_reality,
@@ -49,7 +51,7 @@ router = APIRouter()
 
 def _client_key(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded_for:
+    if settings.trust_x_forwarded_for and forwarded_for:
         return forwarded_for.split(",")[0].strip()
     if request.client and request.client.host:
         return request.client.host
@@ -167,10 +169,13 @@ async def recruiter_create_share(request: Request, payload: RecruiterShareCreate
     _enforce_rate_limit(request, limit=30)
     try:
         validate_share_payload(payload)
+        result_payload = payload.result_payload
+        if settings.share_redact_sensitive_fields:
+            result_payload = redact_share_payload(result_payload)
         share_id, expires_at = create_recruiter_share(
             tool_slug=payload.tool_slug,
             locale=payload.locale,
-            result_payload=payload.result_payload,
+            result_payload=result_payload,
         )
         return RecruiterShareCreateResponse(share_id=share_id, expires_at=expires_at)
     except RecruiterQualityError as exc:

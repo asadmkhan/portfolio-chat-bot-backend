@@ -389,6 +389,14 @@ class ToolsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("unsupported", response.json()["detail"].lower())
 
+    def test_extract_text_rejects_signature_mismatch(self):
+        response = self.client.post(
+            "/v1/tools/extract-text",
+            files={"file": ("resume.pdf", b"plain text pretending to be a pdf", "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("signature", response.json()["detail"].lower())
+
     def test_extract_text_rejects_legacy_doc_with_conversion_message(self):
         response = self.client.post(
             "/v1/tools/extract-text",

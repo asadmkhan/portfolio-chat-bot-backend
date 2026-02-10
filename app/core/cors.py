@@ -1,11 +1,12 @@
-DEV_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://[::1]:5173",
-    "http://localhost:3000",
-    "https://www.codedbyasad.com",
-    "https://codedbyasad.com",
-    "https://safetysurfer.com",
-    "https://www.safetysurfer.com",
-    "https://*.vercel.app",
-]
+from __future__ import annotations
+
+from app.core.config import settings
+
+
+def cors_allowed_origins() -> list[str]:
+    return list(settings.cors_allowed_origins)
+
+
+def cors_allow_origin_regex() -> str | None:
+    regex = (settings.cors_allow_origin_regex or "").strip()
+    return regex or None

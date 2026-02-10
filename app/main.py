@@ -13,7 +13,7 @@ from app.api.v1.analytics import router as analytics_router
 from app.api.v1.actions import router as actions_router
 from app.api.v1.tools import router as tools_router
 from app.api.v1.recruiter import router as recruiter_router
-from app.core.cors import DEV_ALLOWED_ORIGINS
+from app.core.cors import cors_allow_origin_regex, cors_allowed_origins
 from app.core.rate_limit import limiter
 from app.core.config import settings
 from dotenv import load_dotenv
@@ -28,10 +28,11 @@ app = FastAPI(title="Portfolio Chat Bot API", version="0.1.0", lifespan=lifespan
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=DEV_ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_allowed_origins(),
+    allow_origin_regex=cors_allow_origin_regex(),
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

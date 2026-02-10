@@ -1,4 +1,5 @@
 from typing import AsyncGenerator
+import hashlib
 import json
 import logging
 import time
@@ -17,6 +18,13 @@ from app.analytics.db import log_chat_event
 logger = logging.getLogger("app.chat")
 _conversations: dict[str, list[dict[str, str]]] = {}
 _max_history = 6
+
+
+def _short_hash(value: str | None) -> str:
+    normalized = (value or "").strip()
+    if not normalized:
+        return ""
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
 
 
 def _strip_json_block(text: str) -> str:
@@ -126,14 +134,16 @@ async def stream_chat(
                     "event": "chat_request",
                     "lang": lang,
                     "k": top_k,
-                    "conversation_id": conversation_id,
+                    "conversation_hash": _short_hash(conversation_id),
+                    "message_id_hash": _short_hash(message_id),
                     "compress_context": compress_context,
                     "include_citations": resolved_include_citations,
                     "use_mmr": resolved_use_mmr,
                     "fetch_k": resolved_fetch_k,
                     "mmr_lambda": resolved_mmr_lambda,
                     "max_score": max_score,
-                    "message": user_message[: settings.log_message_max_chars],
+                    "message_len": len(user_message),
+                    "message_hash": _short_hash(user_message),
                     "chunk_ids": [c.get("id") for c in chunks],
                 }
             )

@@ -9,6 +9,9 @@ data/analytics.db
 data/tools_rate_limit.db
 data/tools_rate_limit.db-shm
 data/tools_rate_limit.db-wal
+data/recruiter_share.db
+data/recruiter_share.db-shm
+data/recruiter_share.db-wal
 *.log
 secrets/
 

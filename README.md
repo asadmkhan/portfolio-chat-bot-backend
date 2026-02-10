@@ -6,7 +6,9 @@ pip install -r requirements.txt
 ## Configure
 copy .env.example .env
 # fill OPENAI_API_KEY
-# (optional) set API_KEY to protect /v1/chat/stream
+# set CHAT_AUTH_MODE=public or protected
+# if CHAT_AUTH_MODE=protected, API_KEY is required (startup fails closed without it)
+# set CORS_ALLOWED_ORIGINS / CORS_ALLOW_ORIGIN_REGEX for your frontend hosts
 # (optional) adjust RATE_LIMIT, RATE_LIMIT_ENABLED, LOG_LEVEL, SENTRY_DSN
 
 ## Ingest

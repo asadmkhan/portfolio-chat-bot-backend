@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
+from app.core.config import settings
 from app.core.tools_rate_limit import ToolsRateLimitExceeded, enforce_tools_rate_limit
 from app.schemas.tools import (
     ExtractJobRequest,
@@ -41,6 +42,7 @@ from app.services.tools_service import (
     run_summarizer,
     run_vpn_tool,
     save_lead,
+    validate_upload_signature,
 )
 from app.services.tools_llm import ToolsLLMError
 
@@ -49,7 +51,7 @@ router = APIRouter()
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 ALLOWED_EXTENSIONS = {
-    "txt", "md", "rtf", "pdf", "docx", "doc",
+    "txt", "md", "rtf", "pdf", "docx",
     "pptx", "ppt", "png", "jpg", "jpeg", "webp",
     "gif", "bmp", "mp4", "mov", "avi", "mkv", "webm", "m4v",
 }
@@ -57,7 +59,7 @@ ALLOWED_EXTENSIONS = {
 
 def _client_key(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for", "").strip()
-    if forwarded_for:
+    if settings.trust_x_forwarded_for and forwarded_for:
         return forwarded_for.split(",")[0].strip()
     if request.client and request.client.host:
         return request.client.host
@@ -237,6 +239,11 @@ async def tools_extract_text(request: Request, file: UploadFile = File(...)):
     filename = file.filename or "uploaded-file"
 
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext == "doc":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Legacy .doc is not supported. Convert to .docx.",
+        )
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -259,6 +266,7 @@ async def tools_extract_text(request: Request, file: UploadFile = File(...)):
     payload = b"".join(chunks)
 
     try:
+        validate_upload_signature(filename=filename, content=payload)
         return extract_text_from_file(filename=filename, content=payload)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

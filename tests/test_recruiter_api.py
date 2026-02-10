@@ -210,6 +210,30 @@ class RecruiterApiTests(unittest.TestCase):
         self.assertEqual(get_body["tool_slug"], "resume-authenticity")
         self.assertEqual(get_body["locale"], "en")
         self.assertIn("result_payload", get_body)
+        self.assertGreaterEqual(len(create_body["share_id"]), 22)
+
+    def test_share_redacts_sensitive_fields(self):
+        response = self.client.post(
+            "/v1/recruiter/share",
+            json={
+                "tool_slug": "resume-authenticity",
+                "locale": "en",
+                "result_payload": {
+                    "summary": "candidate email jane@example.com",
+                    "resume_text": "Raw resume should never be stored in share payload.",
+                    "nested": {"jd_text": "Confidential JD body"},
+                },
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        share_id = response.json()["share_id"]
+
+        get_response = self.client.get(f"/v1/recruiter/share/{share_id}")
+        self.assertEqual(get_response.status_code, 200)
+        payload = get_response.json()["result_payload"]
+        self.assertEqual(payload["resume_text"], "[redacted-sensitive-field]")
+        self.assertEqual(payload["nested"]["jd_text"], "[redacted-sensitive-field]")
+        self.assertIn("[redacted-email]", payload["summary"])
 
     def test_share_unknown_tool_rejected(self):
         response = self.client.post(
