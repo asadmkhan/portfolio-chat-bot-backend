@@ -53,6 +53,7 @@ from app.services.tools_llm import (
     transcribe_media,
     vision_extract_text,
 )
+from app.services import tools_file_security as file_security
 
 logger = logging.getLogger(__name__)
 
@@ -4456,284 +4457,75 @@ SUMMARIZER_TOOL_SLUGS = {
 
 
 def _normalize_public_url(raw_url: str, *, field_label: str) -> tuple[str, str]:
-    value = (raw_url or "").strip()
-    if not value:
-        raise ValueError(f"{field_label} is required.")
-    if not re.match(r"^https?://", value, flags=re.IGNORECASE):
-        value = f"https://{value}"
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError(f"Only http/https {field_label.lower()}s are supported.")
-    if not parsed.netloc:
-        raise ValueError(f"Invalid {field_label.lower()}.")
-    hostname = (parsed.hostname or "").lower().strip()
-    if not hostname:
-        raise ValueError(f"Invalid {field_label.lower()} host.")
-    normalized = urlunparse(
-        (
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            parsed.path or "/",
-            "",
-            parsed.query,
-            "",
-        )
-    )
-    return normalized, hostname
+    return file_security.normalize_public_url(raw_url, field_label=field_label)
 
 
 def _normalize_job_url(raw_url: str) -> tuple[str, str]:
-    return _normalize_public_url(raw_url, field_label="Job URL")
+    return file_security.normalize_job_url(raw_url)
 
 
 def _normalize_resume_url(raw_url: str) -> tuple[str, str]:
-    return _normalize_public_url(raw_url, field_label="Resume URL")
+    return file_security.normalize_resume_url(raw_url)
 
 
 def _host_is_private_or_local(hostname: str) -> bool:
-    host = (hostname or "").strip().lower()
-    if host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local"):
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-        return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
-    except ValueError:
-        pass
-    try:
-        for family, _socktype, _proto, _canon, sockaddr in socket.getaddrinfo(host, None):
-            address = sockaddr[0] if sockaddr else ""
-            if not address:
-                continue
-            try:
-                resolved = ipaddress.ip_address(address)
-            except ValueError:
-                continue
-            if resolved.is_private or resolved.is_loopback or resolved.is_link_local or resolved.is_reserved:
-                return True
-    except Exception:
-        # If DNS resolution fails, we do not hard-block.
-        return False
-    return False
+    return file_security.host_is_private_or_local(hostname)
 
 
 def _normalize_google_drive_url(parsed: Any) -> str | None:
-    host = (parsed.netloc or "").lower()
-    if "drive.google.com" not in host:
-        return None
-    path = parsed.path or ""
-    query = parse_qs(parsed.query or "")
-    file_id = ""
-    match = re.search(r"/file/d/([^/]+)", path)
-    if match:
-        file_id = match.group(1)
-    if not file_id:
-        file_id = _safe_str((query.get("id") or [""])[0], max_len=200)
-    if not file_id:
-        return None
-    return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return file_security._normalize_google_drive_url(parsed)
 
 
 def _normalize_dropbox_url(parsed: Any) -> str | None:
-    host = (parsed.netloc or "").lower()
-    if "dropbox.com" not in host and "dropboxusercontent.com" not in host:
-        return None
-    path = parsed.path or ""
-    if not path:
-        return None
-    query = parse_qs(parsed.query or "")
-    query["dl"] = ["1"]
-    rebuilt_query = "&".join(f"{key}={value}" for key, values in query.items() for value in values)
-    netloc = parsed.netloc.lower().replace("www.", "")
-    if "dropbox.com" in netloc:
-        netloc = netloc.replace("dropbox.com", "dl.dropboxusercontent.com")
-    return urlunparse(("https", netloc, path, "", rebuilt_query, ""))
+    return file_security._normalize_dropbox_url(parsed)
 
 
 def _normalize_onedrive_url(parsed: Any) -> str | None:
-    host = (parsed.netloc or "").lower()
-    if "1drv.ms" not in host and "onedrive.live.com" not in host:
-        return None
-    query = parse_qs(parsed.query or "")
-    query["download"] = ["1"]
-    rebuilt_query = "&".join(f"{key}={value}" for key, values in query.items() for value in values)
-    return urlunparse(("https", parsed.netloc.lower(), parsed.path or "/", "", rebuilt_query, ""))
+    return file_security._normalize_onedrive_url(parsed)
 
 
 def _normalize_resume_download_url(url: str) -> str:
-    parsed = urlparse(url)
-    for resolver in (_normalize_google_drive_url, _normalize_dropbox_url, _normalize_onedrive_url):
-        resolved = resolver(parsed)
-        if resolved:
-            return resolved
-    return url
+    return file_security.normalize_resume_download_url(url)
 
 
 def _is_zip_payload(content: bytes) -> bool:
-    return any(content.startswith(prefix) for prefix in ZIP_MAGICS)
+    return file_security._is_zip_payload(content)
 
 
 def _zip_has_paths(content: bytes, prefixes: tuple[str, ...]) -> bool:
-    try:
-        with ZipFile(BytesIO(content)) as archive:
-            names = archive.namelist()
-        return any(any(name.startswith(prefix) for prefix in prefixes) for name in names)
-    except Exception:
-        return False
+    return file_security._zip_has_paths(content, prefixes)
 
 
 def _is_probably_text_payload(content: bytes) -> bool:
-    if not content:
-        return False
-    sample = content[:4096]
-    if b"\x00" in sample:
-        return False
-    printable = 0
-    for byte in sample:
-        if byte in (9, 10, 13) or 32 <= byte <= 126:
-            printable += 1
-    return (printable / len(sample)) >= 0.75
+    return file_security._is_probably_text_payload(content)
 
 
 def _looks_like_mp4_family(content: bytes) -> bool:
-    if len(content) < 12:
-        return False
-    if content[4:8] != b"ftyp":
-        return False
-    major = content[8:12]
-    return major in {
-        b"isom",
-        b"iso2",
-        b"avc1",
-        b"mp41",
-        b"mp42",
-        b"M4V ",
-        b"qt  ",
-        b"MSNV",
-    }
+    return file_security._looks_like_mp4_family(content)
 
 
 def validate_upload_signature(*, filename: str, content: bytes) -> None:
-    ext = (filename.rsplit(".", 1)[-1].lower() if "." in filename else "")
-    if ext == "doc":
-        raise ValueError("Legacy .doc is not supported. Convert to .docx.")
-
-    if ext == "pdf":
-        if not content.startswith(PDF_MAGIC):
-            raise ValueError("File signature does not match .pdf content.")
-        return
-
-    if ext == "docx":
-        if not _is_zip_payload(content) or not _zip_has_paths(content, ("word/",)):
-            raise ValueError("File signature does not match .docx content.")
-        return
-
-    if ext == "pptx":
-        if not _is_zip_payload(content) or not _zip_has_paths(content, ("ppt/",)):
-            raise ValueError("File signature does not match .pptx content.")
-        return
-
-    if ext == "ppt":
-        raise ValueError("Legacy .ppt files are not supported. Please upload .pptx or paste text.")
-
-    if ext in {"txt", "md", "rtf"}:
-        if not _is_probably_text_payload(content):
-            raise ValueError(f"File signature does not match .{ext} text content.")
-        return
-
-    if ext == "png":
-        if not content.startswith(PNG_MAGIC):
-            raise ValueError("File signature does not match .png content.")
-        return
-
-    if ext in {"jpg", "jpeg"}:
-        if not content.startswith(JPEG_MAGIC):
-            raise ValueError("File signature does not match .jpg/.jpeg content.")
-        return
-
-    if ext == "gif":
-        if not any(content.startswith(magic) for magic in GIF_MAGICS):
-            raise ValueError("File signature does not match .gif content.")
-        return
-
-    if ext == "bmp":
-        if not content.startswith(BMP_MAGIC):
-            raise ValueError("File signature does not match .bmp content.")
-        return
-
-    if ext == "webp":
-        if len(content) < 12 or not content.startswith(WEBP_RIFF_MAGIC) or content[8:12] != WEBP_WEBP_MAGIC:
-            raise ValueError("File signature does not match .webp content.")
-        return
-
-    if ext in {"mp4", "mov", "m4v"}:
-        if not _looks_like_mp4_family(content):
-            raise ValueError(f"File signature does not match .{ext} content.")
-        return
-
-    if ext in {"avi", "mkv", "webm"}:
-        if len(content) < 4:
-            raise ValueError(f"File signature does not match .{ext} content.")
-        return
+    file_security.validate_upload_signature(filename=filename, content=content)
 
 
 def _extract_filename_from_content_disposition(value: str) -> str:
-    if not value:
-        return ""
-    # RFC 6266 fallback parsing.
-    filename_star = re.search(r"filename\*=UTF-8''([^;]+)", value, flags=re.IGNORECASE)
-    if filename_star:
-        try:
-            return _safe_str(re.sub(r"%([0-9A-Fa-f]{2})", lambda m: chr(int(m.group(1), 16)), filename_star.group(1)), max_len=255)
-        except Exception:
-            pass
-    filename = re.search(r'filename="?([^";]+)"?', value, flags=re.IGNORECASE)
-    if filename:
-        return _safe_str(filename.group(1).strip(), max_len=255)
-    return ""
+    return file_security.extract_filename_from_content_disposition(value, _safe_str)
 
 
 def _extension_from_content_type(content_type: str) -> str:
-    sanitized = _safe_str(content_type.split(";")[0], max_len=120).lower()
-    if not sanitized:
-        return ""
-    explicit = RESUME_CONTENT_TYPE_EXTENSION_HINTS.get(sanitized)
-    if explicit:
-        return explicit
-    guessed = mimetypes.guess_extension(sanitized) or ""
-    return guessed.lstrip(".").lower()
+    return file_security.extension_from_content_type(content_type, _safe_str)
 
 
 def _filename_from_url_and_headers(final_url: str, headers: Any) -> str:
-    disposition = ""
-    try:
-        disposition = _safe_str(headers.get("content-disposition"), max_len=500)
-    except Exception:
-        disposition = ""
-    filename = _extract_filename_from_content_disposition(disposition)
-    if filename:
-        return filename
-    path_name = os.path.basename(urlparse(final_url).path or "").strip()
-    return _safe_str(path_name, max_len=255)
+    return file_security.filename_from_url_and_headers(final_url, headers, _safe_str)
 
 
 def _extension_from_filename(filename: str) -> str:
-    if "." not in filename:
-        return ""
-    return _safe_str(filename.rsplit(".", 1)[-1], max_len=20).lower()
+    return file_security.extension_from_filename(filename, _safe_str)
 
 
 def _safe_resume_filename(final_url: str, headers: Any, content_type: str) -> str:
-    filename = _filename_from_url_and_headers(final_url, headers)
-    ext = _extension_from_filename(filename)
-    if not ext:
-        guessed_ext = _extension_from_content_type(content_type)
-        if guessed_ext:
-            base = _safe_str(filename or "resume", max_len=220).rstrip(".")
-            filename = f"{base}.{guessed_ext}"
-            ext = guessed_ext
-    if not filename:
-        filename = "resume.txt"
-    return filename
+    return file_security.safe_resume_filename(final_url, headers, content_type, _safe_str)
 
 
 def _strip_html_fragment(value: str) -> str:
