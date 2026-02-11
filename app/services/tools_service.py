@@ -75,20 +75,77 @@ IPV6_RE = re.compile(r"\b(?:[A-Fa-f0-9]{0,4}:){2,7}[A-Fa-f0-9]{0,4}\b")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 STOPWORDS = {
+    # Articles, pronouns, determiners
     "the", "and", "for", "with", "that", "this", "your", "you", "from", "into", "our", "are",
-    "will", "must", "have", "has", "job", "role", "team", "work", "using", "use", "experience",
-    "ability", "strong", "required", "preferred", "skills", "skill",
+    "its", "his", "her", "their", "they", "them", "these", "those", "which", "what", "who",
+    "whom", "whose", "where", "when", "how", "why", "each", "every", "both", "few", "many",
+    "much", "some", "any", "all", "most", "other", "another", "such", "than", "then",
+    # Common verbs / modals / auxiliaries
+    "will", "must", "have", "has", "had", "can", "could", "would", "should", "shall", "may",
+    "might", "been", "being", "was", "were", "did", "does", "not", "also", "too", "very",
+    "just", "only", "even", "still", "yet", "already", "always", "never", "often", "well",
+    # Common prepositions / conjunctions
+    "but", "nor", "yet", "about", "above", "after", "before", "between", "during", "under",
+    "over", "through", "once", "until", "while", "since", "because", "although", "though",
+    "whether", "either", "neither", "here", "there", "where", "again", "further",
+    # Generic verbs that are never skills
+    "get", "got", "make", "made", "take", "took", "give", "gave", "come", "came", "find",
+    "found", "keep", "kept", "let", "put", "say", "said", "tell", "told", "know", "knew",
+    "think", "thought", "see", "saw", "want", "like", "need", "help", "try", "start",
+    "show", "hear", "play", "run", "move", "live", "believe", "bring", "happen",
+    "set", "become", "leave", "feel", "seem", "look", "turn", "call", "include",
+    "love", "enjoy", "best", "new", "own", "back", "way", "long", "right",
+    "around", "doing", "goes", "makes", "made", "possible", "able", "sure", "real",
+    "natural", "along", "based", "open", "used", "means", "different", "less", "more",
+    # JD / resume structural filler
+    "job", "role", "team", "work", "using", "use", "experience", "ability", "strong",
+    "required", "preferred", "skills", "skill",
 }
 
 TOOL_TERMS = {
-    "python", "java", "c#", "c++", "react", "next.js", "nextjs", "node.js", "node", "docker",
-    "kubernetes", "aws", "azure", "gcp", "sql", "postgresql", "mongodb", "redis", "tensorflow", "pytorch",
-    "typescript", "javascript", "go", "golang", "rust", "ruby", "php", "swift", "kotlin",
-    "angular", "vue", "svelte", "django", "flask", "fastapi", "spring", "express",
-    "terraform", "ansible", "jenkins", "github", "gitlab", "circleci",
-    "elasticsearch", "kafka", "rabbitmq", "graphql", "rest", "grpc",
-    "mysql", "dynamodb", "cassandra", "neo4j", "snowflake",
-    "figma", "sketch", "jira", "confluence", "datadog", "splunk", "prometheus", "grafana",
+    # Languages
+    "python", "java", "c#", "c++", "rust", "ruby", "php", "swift", "kotlin",
+    "typescript", "javascript", "go", "golang", "scala", "perl", "r", "dart", "lua",
+    # Version control
+    "git", "svn",
+    # Frontend
+    "react", "next.js", "nextjs", "angular", "vue", "svelte", "ember",
+    "tailwind", "tailwind css", "bootstrap", "webpack", "vite", "babel", "storybook",
+    # Backend
+    "node.js", "node", "express", "django", "flask", "fastapi", "spring",
+    "rails", "ruby on rails", "laravel", "asp.net", "nestjs",
+    # Cloud / infra
+    "docker", "kubernetes", "aws", "azure", "gcp", "terraform", "ansible",
+    "jenkins", "circleci", "github actions", "gitlab ci",
+    # Data / DB
+    "sql", "postgresql", "mongodb", "redis", "mysql", "dynamodb", "cassandra",
+    "neo4j", "snowflake", "elasticsearch", "kafka", "rabbitmq",
+    # API / protocol
+    "graphql", "rest", "restful", "grpc",
+    # ML / AI
+    "tensorflow", "pytorch", "scikit-learn", "pandas", "numpy",
+    # DevOps / testing
+    "cypress", "jest", "testing library", "selenium", "playwright", "mocha",
+    "pytest", "junit", "cucumber",
+    # Collaboration / project
+    "github", "gitlab", "bitbucket", "jira", "confluence",
+    # Observability
+    "datadog", "splunk", "prometheus", "grafana", "new relic",
+    # Design
+    "figma", "sketch", "adobe xd", "invision",
+    # Productivity / data tools (cross-industry)
+    "excel", "power bi", "tableau", "salesforce", "hubspot",
+    "sap", "oracle", "workday", "servicenow",
+    "quickbooks", "xero", "netsuite",
+    "autocad", "solidworks", "matlab", "spss",
+    "slack", "notion", "asana", "trello", "monday.com",
+    "zoom", "microsoft teams", "sharepoint",
+    "photoshop", "illustrator", "indesign", "canva", "after effects",
+    "google analytics", "google ads", "meta ads", "mailchimp",
+    "linkedin", "youtube", "tiktok", "marketo", "pardot",
+    "hootsuite", "buffer", "semrush", "ahrefs", "moz",
+    "hotjar", "mixpanel", "segment", "amplitude",
+    "zapier", "make", "intercom", "zendesk", "freshdesk",
 }
 
 # Synonym/alias map: maps alternate spellings -> canonical term for matching.
@@ -122,11 +179,53 @@ TERM_SYNONYMS: dict[str, str] = {
     "dl": "deep learning", "deep learning": "deep learning",
     "llm": "large language models", "large language models": "large language models",
     "nlp": "natural language processing", "natural language processing": "natural language processing",
-    "rest": "rest", "restful": "rest", "rest api": "rest",
+    "rest": "rest", "restful": "rest", "rest api": "rest", "restful apis": "rest", "restful api": "rest",
+    "rails": "ruby on rails", "ruby on rails": "ruby on rails",
+    "tailwind": "tailwind css", "tailwind css": "tailwind css",
     "graphql": "graphql", "graph ql": "graphql",
     "scss": "sass", "sass": "sass",
     "es6": "javascript", "ecmascript": "javascript",
+    "version control": "git", "vcs": "git",
+    "conversion rate optimization": "cro", "conversion optimization": "cro", "cro": "cro",
+    "a/b testing": "ab testing", "ab testing": "ab testing", "split testing": "ab testing",
 }
+
+# Multi-word terms that should be extracted as single units.
+# Sorted longest-first at runtime so "ruby on rails" matches before "ruby".
+COMPOUND_TERMS: set[str] = {
+    # Tech stacks / frameworks
+    "tailwind css", "ruby on rails", "next.js", "node.js", "vue.js", "angular.js",
+    "express.js", "nest.js", "nuxt.js", "asp.net", "spring boot",
+    "react native", "react router", "entity framework",
+    # CI / CD / DevOps
+    "github actions", "gitlab ci", "google cloud", "google cloud platform",
+    "amazon web services", "microsoft azure",
+    "ci/cd", "ci-cd",
+    # Testing
+    "testing library", "react testing library",
+    # API
+    "rest api", "restful api", "restful apis",
+    # Data / ML
+    "machine learning", "deep learning", "natural language processing",
+    "large language models", "data science", "data engineering",
+    "power bi", "google analytics",
+    # Design
+    "adobe xd", "after effects", "user experience", "user interface",
+    # Business / cross-industry
+    "google ads", "meta ads", "supply chain", "six sigma",
+    "project management", "product management",
+    "new relic", "monday.com",
+    # Soft skills (multi-word)
+    "cross-functional", "problem-solving",
+    # Version control
+    "version control",
+    # Marketing
+    "digital marketing", "email marketing", "content marketing",
+    "social media", "social media management",
+    "marketing automation", "conversion rate optimization", "conversion optimization",
+    "ab testing", "a/b testing",
+}
+_COMPOUND_TERMS_SORTED: list[str] = sorted(COMPOUND_TERMS, key=len, reverse=True)
 
 DOMAIN_TERMS = {
     # Tech domains
@@ -135,7 +234,10 @@ DOMAIN_TERMS = {
     # Marketing & sales
     "seo", "sem", "ppc", "hubspot", "marketo", "salesforce", "analytics",
     "branding", "content", "copywriting", "campaign", "conversion",
-    "abm", "martech", "automation",
+    "abm", "martech", "automation", "cro",
+    "email marketing", "content marketing", "digital marketing",
+    "social media", "inbound", "outbound", "lead generation",
+    "marketing automation", "demand generation",
     # Finance & accounting
     "accounting", "auditing", "forecasting", "budgeting", "gaap", "ifrs",
     "valuation", "underwriting", "portfolio",
@@ -161,30 +263,115 @@ HARD_FILTER_TERMS = {
 }
 
 LOW_SIGNAL_TERMS = {
-    "role", "roles", "team", "product", "technical", "business", "company", "client", "customers", "customer",
+    # Roles / org structure
+    "role", "roles", "team", "teams", "product", "products", "technical", "business",
+    "company", "companies", "client", "clients", "customers", "customer",
+    "organization", "department", "group", "division",
+    # Time words
     "day", "days", "month", "months", "year", "years", "week", "weeks",
+    # JD requirement filler
     "required", "requirement", "requirements", "requires", "preferred", "must", "need", "needed",
     "looking", "seeking", "candidate", "candidates", "position", "job", "responsibilities", "responsibility",
-    "work", "working", "ability", "abilities", "skill", "skills", "experience", "experienced",
-    "engineer", "engineering", "developer", "development", "platform",
+    "work", "working", "ability", "abilities", "skill", "skills", "experience", "experienced", "experiences",
+    "engineer", "engineering", "developer", "development", "platform", "platforms",
     "plus", "nice", "bonus", "good", "great", "strong", "excellent", "knowledge", "understanding",
     "onsite", "on-site", "hybrid", "remote", "office", "location", "based",
     "full", "time", "part", "level", "senior", "junior", "mid",
     "across", "within", "using", "with", "without", "from", "into",
     # Job title words (not actionable skills)
     "director", "manager", "coordinator", "supervisor", "specialist", "consultant",
+    "associate", "analyst", "intern", "assistant", "head", "chief", "officer", "vp",
     "proven", "track", "record",
     "proficiency", "proficient", "expertise", "expert", "familiar", "familiarity",
     "tools", "tool", "equivalent", "related", "relevant", "including",
     "decision", "making", "direct", "reports", "report",
     "minimum", "ideal", "ideally", "typically", "approximately",
+    # Generic verbs / gerunds that are NOT skills
+    "building", "built", "build", "creating", "created", "create",
+    "developing", "developed", "develop", "designing", "designed",
+    "implementing", "implemented", "implement", "delivering", "delivered", "deliver",
+    "managing", "managed", "manage", "leading", "leading",
+    "helping", "helped", "shipping", "shipped", "ship",
+    "solving", "writing", "reading", "running", "testing",
+    # Generic nouns that pollute skill lists
+    "things", "thing", "ideas", "idea", "process", "processes",
+    "services", "service", "systems", "system", "solutions", "solution",
+    "features", "feature", "projects", "project", "apps", "app",
+    "applications", "application", "code", "codes", "codebase",
+    "software", "technology", "technologies", "data", "information",
+    # JD filler / descriptive words
+    "world", "future", "modern", "deep", "truly", "real",
+    "early", "high", "first", "right", "people", "someone",
+    "everything", "something", "anything", "together", "beyond",
+    "today", "growth", "impact", "quality", "value",
+    "opportunity", "opportunities", "environment", "culture",
+    "success", "learn", "learning", "learner",
+    # Adjectives / adverbs that inflate frequency but aren't skills
+    "best", "better", "top", "key", "core", "main", "major",
+    "able", "capable", "comfortable", "confident",
+    "fast", "quickly", "effectively", "efficiently", "successfully",
+    "directly", "closely", "naturally", "currently",
+    # Company / employer description filler
+    "offer", "offers", "provide", "provides", "support", "supports",
+    "join", "joining", "believe", "believes",
+    "bring", "brings", "driven", "exciting", "excited",
+    "passionate", "passion", "mission", "vision",
+    # Miscellaneous JD noise that never represent actionable skills
+    "users", "user", "input", "output", "range", "salary", "compensation",
+    "colleagues", "colleague", "feedback", "reviews", "review",
+    "established", "advanced", "common", "natural",
+    "scratch", "shape", "stack",
+    "patterns", "pattern", "maintained", "maintainable",
+    "high-quality", "best-in-class", "consumer-facing",
+    "collaborate", "groups", "rfc",
+    "whatever", "needs", "fluent", "all-rounder",
+    "checkout", "connect", "design", "scale",
+    "architectures", "architecture",
+    "similar", "databases", "database", "strategies", "strategy",
+    "pipelines", "pipeline", "caching",
+    "integration", "integrations",
+    # Benefits / offer section filler
+    "equity", "budget", "salary", "perks", "perk", "stipend",
+    "insurance", "dental", "medical", "vacation", "pto",
+    "remote-first", "phone", "loves", "loved",
+    # Generic structural words
+    "version", "control", "frameworks", "framework",
+    "concepts", "concept", "principles", "principle",
+    "practices", "practice", "standards", "standard",
+    "approach", "approaches", "methods", "method",
+    "methodologies", "methodology",
+    # Too generic on their own — specific API types (rest, graphql, grpc) capture real skills
+    "api", "apis",
+    # Generic descriptors that leak from JD requirement text
+    "preferably", "preferred", "ideally", "optional",
+    "data-driven", "mindset", "analyze", "metrics", "metric",
+    "template", "templates", "dashboards", "dashboard",
+    "video", "videos", "customize", "customization",
+    "multi-channel", "channels", "channel",
+    "optimize", "optimization", "optimizing",
+    "execute", "executing", "execution",
+    "digital", "online", "performance",
+    # Generic context words that leak from skill-context extraction
+    "knowledge", "requirements", "proficiency", "familiarity",
+    "bilingual", "english", "spanish", "french", "mandarin", "german",
+    "mass", "critical", "safety", "casualty", "protocols", "protocol",
+    "active", "state", "license", "licensed", "emergency",
+    "privacy", "direct", "documentation",
+    "competitive",
 }
 
 WORK_MODE_TERMS = {"remote", "hybrid", "onsite", "on-site"}
 
 ROLE_SIGNAL_TERMS = {
+    # Tech role signals
     "backend", "frontend", "full-stack", "fullstack", "devops", "sre", "qa",
-    "architecture", "microservices", "api", "apis", "distributed", "scalable", "performance",
+    "architecture", "microservices", "distributed", "scalable",
+    "agile", "scrum", "kanban", "ci/cd", "tdd", "bdd",
+    # Cross-industry role signals
+    "b2b", "b2c", "stakeholder management", "project management", "product management",
+    "client-facing", "customer-facing", "revenue", "p&l",
+    "regulatory", "compliance", "audit", "risk management",
+    "supply chain", "operations", "procurement",
 }
 
 SOFT_SKILL_TERMS = {
@@ -195,12 +382,29 @@ SOFT_SKILL_TERMS = {
     "stakeholder",
     "mentoring",
     "problem-solving",
-    "problem",
     "adaptability",
     "teamwork",
     "cross-functional",
     "planning",
     "prioritization",
+    "initiative",
+    "negotiation",
+    "presentation",
+    "time-management",
+    "creativity",
+    "critical-thinking",
+    "attention-to-detail",
+    "empathy",
+    "delegation",
+    "conflict-resolution",
+    "decision-making",
+    "interpersonal",
+    "self-motivated",
+    "accountability",
+    "flexibility",
+    "resilience",
+    "analytical",
+    "strategic",
 }
 
 AI_CLICHE_TERMS = {
@@ -827,9 +1031,50 @@ def _tokenize(text: str) -> list[str]:
     return tokens
 
 
+def _extract_compound_terms(text: str) -> list[str]:
+    """Extract known multi-word terms from text (e.g. 'tailwind css', 'ruby on rails').
+
+    Returns a list of compound terms found, each lowered. This is run BEFORE
+    single-token extraction so compound terms can be counted alongside singles.
+    """
+    lower = text.lower()
+    found: list[str] = []
+    for compound in _COMPOUND_TERMS_SORTED:
+        # Use word-boundary search; count each occurrence
+        pattern = re.compile(r"\b" + re.escape(compound) + r"\b", re.IGNORECASE)
+        count = len(pattern.findall(lower))
+        for _ in range(count):
+            found.append(compound)
+    return found
+
+
 def _important_terms(text: str, limit: int = 40) -> list[str]:
-    tokens = [t for t in _tokenize(text) if t not in STOPWORDS and len(t) > 2]
-    return [term for term, _ in Counter(tokens).most_common(limit)]
+    """Extract the most important terms from text.
+
+    Combines single tokens with compound multi-word terms, filters stopwords
+    and low-signal words, and returns deduplicated terms ordered by frequency.
+    """
+    # Single tokens (classic tokenization)
+    single_tokens = [t for t in _tokenize(text) if t not in STOPWORDS and len(t) > 2]
+    # Compound terms (multi-word)
+    compound_found = _extract_compound_terms(text)
+
+    # Merge counts: compound terms get their own entries
+    counts: Counter[str] = Counter(single_tokens)
+    compound_counts: Counter[str] = Counter(compound_found)
+
+    # For compound terms, remove constituent single-word counts to avoid double-counting.
+    # E.g., if "tailwind css" is found 2x, subtract 2 from "tailwind" and "css" single counts.
+    for compound, c_count in compound_counts.items():
+        counts[compound] += c_count  # add compound as its own term
+        for word in compound.split():
+            word_lower = word.lower()
+            if word_lower in counts and counts[word_lower] >= c_count:
+                counts[word_lower] -= c_count
+                if counts[word_lower] <= 0:
+                    del counts[word_lower]
+
+    return [term for term, _ in counts.most_common(limit)]
 
 
 def _looks_numeric_or_noise(term: str) -> bool:
@@ -846,11 +1091,349 @@ def _looks_like_location_constraint(term: str, jd_lower: str) -> bool:
     return any(re.search(pattern, jd_lower) for pattern in patterns)
 
 
-def _is_actionable_keyword(term: str, jd_lower: str) -> bool:
+# ---------------------------------------------------------------------------
+# Generic, industry-agnostic skill extraction helpers
+# ---------------------------------------------------------------------------
+# These functions extract skills from ANY JD by analysing context, structure,
+# and formatting — NOT by matching against a dictionary.  This means healthcare
+# terms (Epic, HIPAA, phlebotomy), HR terms (ADP, FMLA, HRIS), construction
+# terms (OSHA, Procore, LEED), etc. all get detected without being hardcoded.
+# ---------------------------------------------------------------------------
+
+# Context patterns that signal "the next word(s) are a skill/tool/cert"
+_SKILL_CONTEXT_RE = re.compile(
+    r"\b(?:"
+    # experience / proficiency patterns
+    r"experience\s+(?:with|in|using)|"
+    r"expertise\s+(?:with|in)|"
+    r"proficien(?:t|cy)\s+(?:with|in)|"
+    r"knowledge\s+of|"
+    r"familiar(?:ity)?\s+with|"
+    r"understanding\s+of|"
+    r"skilled\s+in|"
+    r"competenc(?:e|y)\s+in|"
+    r"background\s+in|"
+    r"trained\s+in|"
+    # certification patterns
+    r"certifi(?:ed|cation)\s+(?:in|for|as)|"
+    r"licensed\s+(?:in|as)|"
+    # work patterns
+    r"(?:worked|working)\s+with|"
+    r"hands[- ]on\s+(?:experience\s+)?with|"
+    r"ability\s+to\s+(?:use|operate|manage)|"
+    # proficiency lists (e.g. "Proficiency with: X, Y, Z")
+    r"proficiency\s+with"
+    r")[ \t]+"
+    # capture the terms that follow — greedily grab words, commas, "and"/"or"
+    # on the same line so we can split comma lists later.
+    # E.g. "Proficiency in IV therapy, wound care, and medication administration"
+    # captures "IV therapy, wound care, and medication administration"
+    r"([\w.#+/-]+(?:[ \t,]+(?:and[ \t]+|or[ \t]+)?[\w.#+/-]+){0,15})",
+    re.IGNORECASE,
+)
+
+# Pattern for parenthetical tool/example lists: "(e.g., X, Y, Z)" or "(X, Y, or Z)"
+_PAREN_LIST_RE = re.compile(
+    r"\("
+    r"(?:e\.?g\.?,?\s*|such\s+as\s+|including\s+|like\s+|i\.?e\.?,?\s*)?"
+    r"([\w.#+/ -]+(?:\s*[,;]\s*[\w.#+/ -]+)+(?:\s*(?:,\s*)?(?:or|and)\s+[\w.#+/ -]+)?)"
+    r"\)",
+    re.IGNORECASE,
+)
+
+# Common false positives to exclude from contextual extraction
+_CONTEXT_NOISE = STOPWORDS | LOW_SIGNAL_TERMS | {
+    "a", "an", "the", "and", "or", "our", "their", "various", "multiple",
+    "other", "related", "new", "complex", "diverse", "both", "all",
+    "relevant", "similar", "appropriate", "modern", "current", "latest",
+    # Structural JD words that appear as proper nouns at bullet starts
+    "requirements", "qualifications", "responsibilities",
+    "knowledge", "proficiency", "familiarity", "understanding",
+    "experience", "expertise", "ability", "skills",
+    "bilingual", "english", "spanish", "french", "mandarin",
+    "healthcare", "education", "financial", "legal",
+    "regulations", "compliance", "safety",
+}
+
+
+def _extract_contextual_skills(text: str) -> set[str]:
+    """Extract skills by analysing HOW terms are used in the JD.
+
+    Instead of checking a dictionary, this looks for context patterns like
+    "experience with X", "certified in Y", "(e.g., A, B, C)" that signal
+    the surrounding words are skills/tools/certifications.
+
+    This is the KEY to generic, industry-agnostic extraction — it works
+    for healthcare ("experience with Epic"), HR ("proficient in ADP"),
+    finance ("knowledge of Bloomberg Terminal"), etc.
+    """
+    found: set[str] = set()
+
+    # --- 1. Context-pattern extraction ---
+    for m in _SKILL_CONTEXT_RE.finditer(text):
+        raw = m.group(1).strip().rstrip(".,;:")
+        # The captured group may be a comma-separated list or single term.
+        # Split on commas, semicolons, "and", "or" to get individual items.
+        parts = re.split(r"\s*[,;]\s*|\s+and\s+|\s+or\s+", raw)
+        for part in parts:
+            part = part.strip().rstrip(".,;:").strip()
+            # Strip leading "and " or "or " fragments that survive splitting
+            part = re.sub(r"^(?:and|or)\s+", "", part).strip()
+            if not part:
+                continue
+            low = part.lower()
+            # Skip obvious noise
+            if low in _CONTEXT_NOISE or len(low) < 2:
+                continue
+            # Skip if it looks like a full phrase (>3 words = probably a sentence fragment)
+            if len(low.split()) > 3:
+                continue
+            # Strip leading noise (or, preferably, etc.)
+            low = re.sub(r"^(?:or|and|preferably|ideally|including|such as)\s+", "", low).strip()
+            # Strip trailing prepositional phrases: "Excel for reporting" -> "excel"
+            low = re.sub(r"\s+(?:for|in|on|at|to|of|with|as|by)\s+\w+.*$", "", low).strip()
+            # Strip trailing generic words from multi-word terms
+            # e.g. "Epic EMR system" -> "epic emr", "HIPAA regulations" -> "hipaa"
+            _trail_noise = {"system", "systems", "software", "tool", "tools",
+                           "platform", "platforms", "regulations", "regulation",
+                           "protocols", "protocol", "standards", "standard",
+                           "procedures", "procedure", "policies", "policy",
+                           "program", "programs", "environment", "environments",
+                           "frameworks", "framework", "processes", "process"}
+            words = low.split()
+            while len(words) > 1 and words[-1] in _trail_noise:
+                words.pop()
+            low = " ".join(words)
+            if low and low not in _CONTEXT_NOISE and len(low) >= 2:
+                found.add(low)
+
+    # --- 2. Parenthetical / example list extraction ---
+    for m in _PAREN_LIST_RE.finditer(text):
+        items_str = m.group(1)
+        items = re.split(r"\s*[,;]\s*|\s+or\s+|\s+and\s+", items_str)
+        for item in items:
+            item = item.strip().rstrip(".,;:").strip()
+            # Strip leading "or "/"and "/"preferably " fragments that survive splitting
+            item = re.sub(r"^(?:or|and|preferably|ideally|including)\s+", "", item).strip()
+            if not item:
+                continue
+            low = item.lower()
+            if low in _CONTEXT_NOISE or len(low) < 2:
+                continue
+            if len(low.split()) > 4:
+                continue
+            found.add(low)
+
+    return found
+
+
+# Regex for ALL-CAPS acronyms (2–7 chars) that are likely certifications,
+# regulations, tools, or standards: HIPAA, FMLA, OSHA, ADP, HRIS, PMP, etc.
+_ACRONYM_RE = re.compile(r"\b([A-Z][A-Z0-9./+#-]{1,7})\b")
+
+# Acronyms to exclude — common abbreviations that aren't skills
+_ACRONYM_NOISE = {
+    "I", "II", "III", "IV", "AM", "PM", "US", "USA", "UK", "EU", "NYC",
+    "LA", "SF", "CA", "TX", "NY", "MA", "WA", "OR", "FL", "IL", "PA",
+    "OH", "GA", "NC", "VA", "CO", "AZ", "MD", "MN", "MO", "NJ", "IN",
+    "TN", "MI", "WI", "CT", "DC", "FTE", "PTO", "YOE", "HR", "IT",
+    "VP", "CEO", "CTO", "CFO", "COO", "CIO", "CMO", "SVP", "EVP",
+    "JD", "CV", "NA", "TBD", "FYI", "FAQ", "WFH", "RTO", "OTE",
+    "KPI", "KPIs", "OKR", "OKRs", "ROI", "YOY", "MOM", "QOQ",
+    "EST", "PST", "CST", "MST", "GMT", "UTC",
+    "HQ", "INC", "LLC", "LTD", "CO", "CORP",
+    "PT", "FT",  # part-time / full-time
+    "AND", "FOR", "THE", "NOT", "BUT", "ALL", "ARE", "WAS",
+    "HAS", "HAD", "CAN", "MAY", "NOW", "NEW", "OUR", "YOU",
+    "WHO", "HOW", "WHY", "USE", "ONE", "TWO",
+}
+
+
+def _extract_uppercase_acronyms(text: str) -> set[str]:
+    """Extract likely acronym-based skills/certifications from text.
+
+    ALL-CAPS terms 2-7 chars in length are almost always acronyms for
+    certifications, regulations, tools, or standards — regardless of industry.
+    Examples: HIPAA, FMLA, OSHA, ADP, HRIS, PMP, ITIL, SOX, GMP, BLS, ACLS,
+    CPA, CFA, FERPA, LEED, PACER, EHR, EMR, etc.
+
+    This is generic — no industry-specific dictionary needed.
+    """
+    found: set[str] = set()
+    for m in _ACRONYM_RE.finditer(text):
+        acr = m.group(1)
+        if acr in _ACRONYM_NOISE:
+            continue
+        # Must be at least 2 chars
+        if len(acr) < 2:
+            continue
+        # Skip pure numbers or single repeated chars
+        if re.fullmatch(r"[0-9]+", acr):
+            continue
+        if len(set(acr)) == 1:
+            continue
+        found.add(acr.lower())
+    return found
+
+
+# Pattern to find capitalised proper nouns in requirement sections that are
+# likely tool/platform names: Epic, Cerner, Procore, Primavera, Workday, etc.
+_PROPER_NOUN_RE = re.compile(r"\b([A-Z][a-z]{2,15})\b")
+
+# Common proper nouns / names to exclude
+_PROPER_NOUN_NOISE = {
+    # Months
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+    "Jan", "Feb", "Mar", "Apr", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    # Days
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun",
+    # Common sentence starters / generic words that happen to be capitalised
+    "The", "This", "That", "These", "Those", "What", "When", "Where", "Which",
+    "Who", "How", "Why", "Our", "Your", "Their", "You", "They", "About",
+    "Join", "Help", "Must", "Will", "Should", "Could", "Would", "Does",
+    "Has", "Have", "Are", "Was", "Were", "Can", "May", "Not", "But",
+    "And", "For", "With", "From", "Into", "Also", "Just", "Only",
+    "All", "Any", "Some", "Each", "Both", "Other", "Own", "New",
+    "Good", "Great", "Strong", "Deep", "High", "Top", "Full", "Key",
+    "Real", "True", "Best", "Nice", "Plus",
+    # People / title words
+    "Manager", "Director", "Engineer", "Senior", "Junior", "Lead",
+    "Associate", "Analyst", "Coordinator", "Specialist", "Consultant",
+    "Team", "Company", "Role", "Position",
+    # Generic action words
+    "Build", "Design", "Create", "Develop", "Manage", "Support", "Drive",
+    "Lead", "Work", "Apply", "Learn", "Grow", "Share", "Test",
+    "Review", "Report", "Plan", "Set", "Use", "Run", "Keep",
+    # Company / structural
+    "Inc", "Ltd", "Corp", "Group",
+}
+
+
+def _extract_proper_noun_tools(req_text: str) -> set[str]:
+    """Extract capitalised proper nouns from REQUIREMENT sections only.
+
+    In requirement sections, capitalised words that aren't common English
+    are very likely tool/platform/system names: Epic, Cerner, Procore,
+    Primavera, Blackboard, Canvas, Bloomberg, Meditech, Kronos, etc.
+
+    Only runs on requirement text (not full JD) to avoid company names.
+    """
+    found: set[str] = set()
+    for m in _PROPER_NOUN_RE.finditer(req_text):
+        word = m.group(1)
+        if word in _PROPER_NOUN_NOISE:
+            continue
+        # Must not be at very start of a sentence (likely just capitalised English)
+        # Check if preceded by period+space or newline — if so, could be sentence start
+        pos = m.start()
+        if pos >= 2:
+            preceding = req_text[pos - 2:pos]
+            # If preceded by ". " or newline, AND the word is a common English word
+            # when lowered, skip it — it's probably just a capitalised sentence start.
+            if preceding.endswith(". ") or preceding.endswith("\n") or preceding.endswith("- "):
+                low = word.lower()
+                if low in STOPWORDS or low in LOW_SIGNAL_TERMS or low in _CONTEXT_NOISE:
+                    continue
+        found.add(word.lower())
+    return found
+
+
+def _extract_bullet_list_terms(req_text: str) -> set[str]:
+    """Extract terms from bullet-pointed requirement lists.
+
+    Bullet points in requirement sections almost always list skills:
+    "- Patient assessment and triage"
+    "• Proficiency with Epic EMR"
+    "- HIPAA compliance"
+
+    This extracts the key terms (nouns, proper nouns, acronyms) from each
+    bullet item, filtering out generic verbs and filler.
+    """
+    found: set[str] = set()
+    # Match lines starting with bullet markers
+    bullet_re = re.compile(r"(?:^|\n)\s*(?:[-•●◦▪*]|(?:\d+[.)]\s))\s*(.+)", re.MULTILINE)
+
+    for m in bullet_re.finditer(req_text):
+        line = m.group(1).strip()
+        if not line or len(line) < 3:
+            continue
+
+        # Extract acronyms from the bullet line
+        for acr_m in _ACRONYM_RE.finditer(line):
+            acr = acr_m.group(1)
+            if acr not in _ACRONYM_NOISE and len(acr) >= 2:
+                found.add(acr.lower())
+
+        # Extract proper nouns from the bullet line
+        for pn_m in _PROPER_NOUN_RE.finditer(line):
+            word = pn_m.group(1)
+            if word not in _PROPER_NOUN_NOISE:
+                found.add(word.lower())
+
+        # Extract parenthetical lists from bullets
+        for pl_m in _PAREN_LIST_RE.finditer(line):
+            items = re.split(r"\s*[,;]\s*|\s+or\s+|\s+and\s+", pl_m.group(1))
+            for item in items:
+                item = item.strip().rstrip(".,;:").strip()
+                item = re.sub(r"^(?:or|and|preferably|ideally|including)\s+", "", item).strip()
+                if item and len(item) >= 2:
+                    low = item.lower()
+                    if low not in _CONTEXT_NOISE:
+                        found.add(low)
+
+    return found
+
+
+def _is_actionable_keyword(
+    term: str,
+    jd_lower: str,
+    context_skills: set[str] | None = None,
+) -> bool:
+    """Determine if a term extracted from a JD is an actionable skill/keyword.
+
+    Three-tier approach:
+      1. FAST PASS — term is in a known dictionary (TOOL_TERMS, DOMAIN_TERMS, etc.)
+      2. CONTEXT PASS — term was identified by contextual extraction (patterns,
+         acronyms, proper nouns, bullet lists).  These are skills that the JD
+         itself tells us about, regardless of industry.
+      3. HEURISTIC PASS — unknown term must clear strict filters to avoid junk.
+
+    The context_skills set is built once per JD by the generic extractors
+    (_extract_contextual_skills, _extract_uppercase_acronyms,
+     _extract_proper_noun_tools, _extract_bullet_list_terms) and passed in.
+    """
     if not term:
         return False
+
+    # ── TIER 1: Known dictionary terms always pass ──
+    _all_known = TOOL_TERMS | ROLE_SIGNAL_TERMS | DOMAIN_TERMS | SOFT_SKILL_TERMS | COMPOUND_TERMS
+    if term in _all_known:
+        return True
+
+    # ── TIER 2: Context-extracted terms pass (industry-agnostic) ──
+    # These were found via JD patterns ("experience with X"), acronym detection,
+    # proper noun detection, or bullet-list extraction.  The JD itself told us
+    # these are skills, so they bypass heuristic filters.
+    if context_skills and term in context_skills:
+        # Still block absolute noise (stopwords, work-mode terms)
+        if term in STOPWORDS or term in WORK_MODE_TERMS:
+            return False
+        if _looks_numeric_or_noise(term):
+            return False
+        # For single-word context terms, also block LOW_SIGNAL_TERMS —
+        # these are too generic even when context-detected.
+        # Multi-word terms (e.g. "wound care", "cardiac monitoring") always
+        # pass because multi-word context matches are very specific.
+        if " " not in term and term in LOW_SIGNAL_TERMS:
+            return False
+        return True
+
+    # ── TIER 3: Heuristic filters for completely unknown terms ──
     if len(term) < 3:
         return False
+    # Explicit blocklists
     if term in STOPWORDS or term in LOW_SIGNAL_TERMS:
         return False
     if term in WORK_MODE_TERMS:
@@ -858,6 +1441,20 @@ def _is_actionable_keyword(term: str, jd_lower: str) -> bool:
     if _looks_numeric_or_noise(term):
         return False
     if _looks_like_location_constraint(term, jd_lower):
+        return False
+    # Reject common verb forms (gerunds, past tense, etc.)
+    if re.fullmatch(r"[a-z]+(?:ing|ed|tion|ment|ness|ful|ous|ive|ary|ble|ally|ily)", term):
+        # Allow only if the term appears in a skill-like context in the JD
+        _skill_context = re.search(
+            rf"\b(?:experience\s+(?:with|in)|proficient\s+in|fluent\s+(?:with|in)|familiar\s+with|worked\s+with|using)\s+{re.escape(term)}\b",
+            jd_lower,
+        )
+        if not _skill_context:
+            return False
+    # Reject very short generic words that aren't known acronyms
+    _known_short = {"api", "git", "sql", "css", "php", "xml", "sas", "crm", "erp",
+                    "sap", "ux", "ui", "qa", "sre", "tdd", "bdd", "b2b", "b2c"}
+    if len(term) <= 4 and term == term.lower() and term not in _known_short:
         return False
     return True
 
@@ -2437,6 +3034,7 @@ SECTION_KEYWORDS: dict[str, set[str]] = {
 }
 
 PREDICTED_SKILL_MAP: dict[str, list[str]] = {
+    # ── Tech: Languages & Frameworks ──
     "python": ["django", "flask", "fastapi", "pandas", "numpy"],
     "react": ["redux", "next.js", "typescript", "webpack"],
     "node": ["express", "nest.js", "typescript", "mongodb"],
@@ -2456,17 +3054,41 @@ PREDICTED_SKILL_MAP: dict[str, list[str]] = {
     "graphql": ["apollo", "rest", "api"],
     "tensorflow": ["pytorch", "machine learning", "python", "numpy"],
     "pytorch": ["tensorflow", "machine learning", "python"],
+    "tailwind": ["react", "next.js", "css", "responsive design"],
+    "tailwind css": ["react", "next.js", "css"],
+    "cypress": ["jest", "testing library", "playwright"],
+    "git": ["github", "gitlab", "ci/cd"],
+    # ── Marketing / Sales ──
+    "hubspot": ["salesforce", "mailchimp", "google analytics"],
+    "salesforce": ["hubspot", "excel", "sql"],
+    "google analytics": ["google ads", "seo", "excel"],
+    "seo": ["google analytics", "sem", "content"],
+    # ── Design ──
+    "figma": ["sketch", "adobe xd", "prototyping"],
+    "photoshop": ["illustrator", "indesign", "canva"],
+    # ── Data / Analytics ──
+    "tableau": ["power bi", "sql", "excel"],
+    "power bi": ["tableau", "sql", "excel"],
+    "excel": ["power bi", "tableau", "sql"],
+    # ── Finance / Accounting ──
+    "quickbooks": ["xero", "excel", "gaap"],
+    "sap": ["oracle", "excel", "erp"],
+    # ── Project Management ──
+    "jira": ["confluence", "asana", "trello"],
+    "asana": ["jira", "trello", "monday.com"],
 }
+
+
+def _count_term_occurrences(text: str, term: str) -> int:
+    """Count how many times *term* appears in *text* (case-insensitive, word-boundary)."""
+    if " " in term:
+        return len(re.findall(r"\b" + re.escape(term) + r"\b", text, re.IGNORECASE))
+    return len(re.findall(r"\b" + re.escape(term) + r"\b", text, re.IGNORECASE))
 
 
 def _build_skills_comparison(
     resume_text: str, jd_text: str, matched_terms: list[str], missing_terms: list[str],
 ) -> dict[str, Any]:
-    resume_tokens = _tokenize(resume_text)
-    jd_tokens = _tokenize(jd_text)
-    resume_counts: Counter[str] = Counter(resume_tokens)
-    jd_counts: Counter[str] = Counter(jd_tokens)
-
     all_terms = set(matched_terms) | set(missing_terms)
     hard_skill_set = TOOL_TERMS | ROLE_SIGNAL_TERMS | DOMAIN_TERMS
     matched_set = set(matched_terms)
@@ -2475,25 +3097,30 @@ def _build_skills_comparison(
     soft_skills: list[dict[str, Any]] = []
 
     for term in sorted(all_terms):
+        jd_count = _count_term_occurrences(jd_text, term)
+        resume_count = _count_term_occurrences(resume_text, term)
         item = {
             "term": term,
-            "jd_count": jd_counts.get(term, 0),
-            "resume_count": resume_counts.get(term, 0),
+            "jd_count": jd_count,
+            "resume_count": resume_count,
             "matched": term in matched_set,
         }
         if term in SOFT_SKILL_TERMS:
             soft_skills.append(item)
-        elif term in hard_skill_set or item["jd_count"] > 0:
+        elif term in hard_skill_set or jd_count > 0:
             hard_skills.append(item)
 
-    jd_soft_terms = [t for t in jd_tokens if t in SOFT_SKILL_TERMS]
-    for term in sorted(set(jd_soft_terms)):
-        if not any(s["term"] == term for s in soft_skills):
+    # Also scan JD for soft skill terms not already captured
+    for sterm in sorted(SOFT_SKILL_TERMS):
+        if any(s["term"] == sterm for s in soft_skills):
+            continue
+        jd_c = _count_term_occurrences(jd_text, sterm)
+        if jd_c > 0:
             soft_skills.append({
-                "term": term,
-                "jd_count": jd_counts.get(term, 0),
-                "resume_count": resume_counts.get(term, 0),
-                "matched": resume_counts.get(term, 0) > 0,
+                "term": sterm,
+                "jd_count": jd_c,
+                "resume_count": _count_term_occurrences(resume_text, sterm),
+                "matched": _count_term_occurrences(resume_text, sterm) > 0,
             })
 
     hard_skills.sort(key=lambda x: (not x["matched"], -x["jd_count"]))
@@ -2504,7 +3131,7 @@ def _build_skills_comparison(
 
     predicted: list[str] = []
     matched_lower = {t.lower() for t in matched_terms}
-    jd_lower_set = {t.lower() for t in jd_tokens}
+    jd_lower_set = {t.lower() for t in _tokenize(jd_text)}
     for term in matched_terms[:10]:
         for candidate in PREDICTED_SKILL_MAP.get(term.lower(), []):
             if candidate not in jd_lower_set and candidate not in matched_lower and candidate not in predicted:
@@ -2588,12 +3215,76 @@ def _build_recruiter_tips(
     lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
 
     first_two_lines = " ".join(lines[:2]).lower() if lines else ""
-    jd_title_terms = [
-        t for t in _important_terms(jd_text, limit=10)
-        if len(t) > 3 and t not in STOPWORDS and t not in LOW_SIGNAL_TERMS
-    ][:5]
+
+    # Extract meaningful job-title / role terms from the JD.
+    # Strategy: look for the actual role title first, then fall back to
+    # known tool/role terms from the JD.  Never suggest company names or
+    # generic English words.
+    _jd_title_candidates: list[str] = []
+
+    # Try to find explicit job title from the JD (e.g. "Frontend Engineer",
+    # "Senior Data Analyst", "Marketing Manager").
+    _title_pattern = re.compile(
+        r"(?:^|\n)\s*(?:the\s+)?(?:role|position|job\s+title)\s*[:\-\u2013]\s*(.+)",
+        re.IGNORECASE,
+    )
+    _title_match_result = _title_pattern.search(jd_text)
+    if _title_match_result:
+        _explicit_title = _title_match_result.group(1).strip().rstrip(".")
+        if _explicit_title and len(_explicit_title) < 80:
+            _jd_title_candidates = [
+                w.lower() for w in _explicit_title.split()
+                if len(w) > 2 and w.lower() not in STOPWORDS
+            ][:5]
+
+    # Try to extract implicit title from early JD text (e.g. "seeking a Senior Marketing Manager")
+    if not _jd_title_candidates:
+        _implicit_title_re = re.compile(
+            r"(?:seeking|looking\s+for|hiring)\s+(?:a|an)\s+"
+            r"((?:senior|junior|lead|principal|staff|mid[- ]level|experienced)?\s*"
+            r"[A-Za-z][A-Za-z-]+(?:\s+[A-Za-z][A-Za-z-]+){0,4})",
+            re.IGNORECASE,
+        )
+        _impl = _implicit_title_re.search(jd_text)
+        if _impl:
+            _impl_title = _impl.group(1).strip()
+            if _impl_title and len(_impl_title) < 80:
+                _jd_title_candidates = [
+                    w.lower() for w in _impl_title.split()
+                    if len(w) > 2 and w.lower() not in STOPWORDS
+                ][:5]
+
+    # If still no title, use known skill/role terms from the JD
+    if not _jd_title_candidates:
+        # Build title suggestion from core role-type terms + top tools.
+        _known_jd = _direct_scan_known_terms(jd_text)
+        # Role-type terms that naturally appear in job titles (cross-industry)
+        _title_role_terms = {
+            # Tech
+            "frontend", "backend", "full-stack", "fullstack", "devops",
+            "sre", "qa", "data", "mobile", "cloud", "security",
+            # Marketing / business
+            "marketing", "digital", "content", "brand", "growth",
+            "product", "sales", "account", "operations", "finance",
+            "hr", "recruiting", "legal", "compliance",
+            # Design
+            "ux", "ui", "design", "creative",
+        }
+        _role_hits = sorted(t for t in _known_jd if t in _title_role_terms)
+        # If no known-term role hits, try frequency-based role terms from JD
+        if not _role_hits:
+            _jd_req = _extract_jd_requirement_text(jd_text)
+            _req_terms = _important_terms(_jd_req, limit=20)
+            _role_hits = [t for t in _req_terms if t in _title_role_terms][:3]
+        # Top tool stack terms (the main tech/tools the role uses)
+        _jd_req = _extract_jd_requirement_text(jd_text)
+        _req_terms = _important_terms(_jd_req, limit=20)
+        _top_tools = [t for t in _req_terms if t in TOOL_TERMS][:3]
+        _jd_title_candidates = (_role_hits + _top_tools)[:5]
+
+    jd_title_terms = _jd_title_candidates
     title_found = first_two_lines if lines else ""
-    title_expected = " ".join(jd_title_terms[:3])
+    title_expected = " ".join(jd_title_terms[:3]) if jd_title_terms else ""
     title_match = any(t in first_two_lines for t in jd_title_terms) if jd_title_terms else False
 
     resume_years = _seniority_to_years(seniority)
@@ -3358,6 +4049,117 @@ def _additional_ai_insights(
     return _safe_str_list(llm_payload.get("insights"), max_items=4, max_len=240)
 
 
+# ---------------------------------------------------------------------------
+# JD section-aware helpers: distinguish requirement sections from company fluff
+# ---------------------------------------------------------------------------
+_JD_REQUIREMENT_HEADERS_RE = re.compile(
+    r"(?:^|\n)\s*(?:"
+    r"what\s+we(?:\u2019re|'re|are)\s+looking\s+for|"
+    r"requirements?|"
+    r"qualifications?|"
+    r"must[\s-]haves?|"
+    r"nice[\s-]to[\s-]haves?|"
+    r"you(?:\u2019ll|'ll|will)\s+(?:need|have|bring)|"
+    r"who\s+you\s+are|"
+    r"the\s+role|"
+    r"your\s+responsibilities|"
+    r"responsibilities|"
+    r"what\s+you(?:\u2019ll|'ll|will)\s+do|"
+    r"key\s+skills|"
+    r"desired\s+skills|"
+    r"technical\s+skills|"
+    r"minimum\s+qualifications|"
+    r"preferred\s+qualifications|"
+    r"skills?\s+(?:&|and)\s+experience"
+    r")",
+    re.IGNORECASE,
+)
+
+_JD_COMPANY_HEADERS_RE = re.compile(
+    r"(?:^|\n)\s*(?:"
+    r"about\s+(?:us|the\s+company|the\s+team|[A-Z][a-z]+)|"
+    r"who\s+we\s+are|"
+    r"our\s+(?:mission|values|culture|story|team)|"
+    r"company\s+(?:overview|description)|"
+    r"what\s+we\s+offer|"
+    r"benefits?\b|"
+    r"perks?\b|"
+    r"compensation\b|"
+    r"salary\b|"
+    r"work\s+at\s+|"
+    r"before\s+you\s+apply|"
+    r"equal\s+opportunity|"
+    r"how\s+to\s+apply"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _extract_jd_requirement_text(jd_text: str) -> str:
+    """Try to isolate the requirement / qualification sections of a JD.
+
+    Returns the requirement-relevant portion of the JD.  If no clear sections
+    are detected, returns the full JD (conservative fallback).
+    """
+    req_matches = list(_JD_REQUIREMENT_HEADERS_RE.finditer(jd_text))
+    if not req_matches:
+        # No section headers found — return full JD
+        return jd_text
+
+    # Collect text from each requirement section until a company section or next req section
+    company_starts = {m.start() for m in _JD_COMPANY_HEADERS_RE.finditer(jd_text)}
+    all_section_starts = sorted(
+        [m.start() for m in req_matches] + list(company_starts)
+    )
+
+    req_parts: list[str] = []
+    for match in req_matches:
+        section_start = match.start()
+        # Find the next section after this one
+        later_starts = [s for s in all_section_starts if s > section_start]
+        section_end = later_starts[0] if later_starts else len(jd_text)
+        req_parts.append(jd_text[section_start:section_end])
+
+    combined = "\n".join(req_parts).strip()
+    return combined if combined else jd_text
+
+
+# Terms that are common English words but also tech terms.
+# These require context to avoid false positives (e.g., "go" the verb vs Go the language).
+_AMBIGUOUS_TERMS = {"go", "r", "dart", "swift", "spring", "express", "ember", "rust", "helm", "oracle"}
+
+
+def _direct_scan_known_terms(text: str) -> set[str]:
+    """Scan text for any term in TOOL_TERMS, ROLE_SIGNAL_TERMS, DOMAIN_TERMS
+    using word-boundary regex. Returns terms found regardless of frequency.
+
+    This ensures single-mention terms like 'docker', 'gcp', 'cypress' are
+    never missed by frequency-based extraction.
+    """
+    lower = text.lower()
+    found: set[str] = set()
+    all_known = TOOL_TERMS | ROLE_SIGNAL_TERMS | DOMAIN_TERMS
+    for term in all_known:
+        if " " in term:
+            # Multi-word: use substring match
+            if term in lower:
+                found.add(term)
+        elif term in _AMBIGUOUS_TERMS:
+            # Ambiguous short terms: require tech context nearby
+            # Look for patterns like "experience with Go", "built in Rust", "using R,"
+            _ctx_patterns = [
+                rf"\b(?:using|with|in|experience|proficient|built|worked|written)\s+{re.escape(term)}\b",
+                rf"\b{re.escape(term)}\s*[,/]",  # "Go, Python" or "Go/Python"
+                rf"\b{re.escape(term)}\s+(?:language|programming|framework|library|platform)\b",
+            ]
+            if any(re.search(p, lower) for p in _ctx_patterns):
+                found.add(term)
+        else:
+            if re.search(r"\b" + re.escape(term) + r"\b", lower):
+                found.add(term)
+    return found
+
+
 def _build_base_analysis(
     payload: ToolRequest,
     *,
@@ -3387,29 +4189,157 @@ def _build_base_analysis(
         resume_text=resume_text,
     )
 
-    jd_terms_raw = _important_terms(jd_text, limit=90)
+    # ── KEYWORD EXTRACTION (section-aware, context-aware, generic) ──
+    #
+    # The pipeline combines FOUR extraction strategies to work across ALL
+    # industries without relying solely on hardcoded term dictionaries:
+    #
+    #   A. Frequency-based extraction (classic TF from requirement sections)
+    #   B. Dictionary scan (TOOL_TERMS, DOMAIN_TERMS, ROLE_SIGNAL_TERMS)
+    #   C. Context-pattern extraction (generic — "experience with X", acronyms,
+    #      proper nouns in requirements, bullet-list items, parenthetical lists)
+    #   D. Resume-side extraction (same A+B+C applied to resume text)
+    #
+    # Strategy C is the KEY to cross-industry accuracy.  It lets the JD itself
+    # tell us what skills matter, so healthcare terms (Epic, HIPAA, phlebotomy),
+    # HR terms (ADP, FMLA, HRIS), finance terms (CPA, SOX, Bloomberg), etc.
+    # all get detected without needing to hardcode every possible term.
+
+    # 1. Isolate the requirement/qualification part of the JD
+    jd_req_text = _extract_jd_requirement_text(jd_text)
+    jd_req_lower = jd_req_text.lower()
+
+    # 2. Generic context-based extraction (industry-agnostic) ── NEW ──
+    #    Build a set of terms that the JD STRUCTURE tells us are skills.
+    jd_context_skills: set[str] = set()
+    jd_context_skills |= _extract_contextual_skills(jd_text)
+    jd_context_skills |= _extract_uppercase_acronyms(jd_req_text)
+    jd_context_skills |= _extract_proper_noun_tools(jd_req_text)
+    jd_context_skills |= _extract_bullet_list_terms(jd_req_text)
+    # Clean: remove stopwords that may have leaked through
+    jd_context_skills -= STOPWORDS
+    jd_context_skills -= _CONTEXT_NOISE
+
+    # 3. Frequency-based extraction from *requirement* section
+    jd_terms_raw = _important_terms(jd_req_text, limit=90)
     actionable_jd_terms = [
         term
         for term in jd_terms_raw
-        if _is_actionable_keyword(term, jd_lower) or term in TOOL_TERMS or term in DOMAIN_TERMS or term in ROLE_SIGNAL_TERMS
+        if _is_actionable_keyword(term, jd_req_lower, jd_context_skills)
+        or term in TOOL_TERMS or term in DOMAIN_TERMS or term in ROLE_SIGNAL_TERMS
     ]
+
+    # 4. Dictionary scan: find every known TOOL/ROLE/DOMAIN term in the JD
+    jd_known_terms = _direct_scan_known_terms(jd_text)
+    jd_req_known_terms = _direct_scan_known_terms(jd_req_text)
+
+    # 5. Merge all sources into a unified actionable set
+    actionable_set = set(actionable_jd_terms)
+
+    # Merge dictionary-scanned known terms
+    for term in sorted(jd_known_terms):
+        if term not in actionable_set:
+            actionable_jd_terms.append(term)
+            actionable_set.add(term)
+
+    # Merge context-extracted terms (the generic / industry-agnostic ones)
+    # Filter: context-extracted terms still need to pass basic noise checks.
+    for term in sorted(jd_context_skills):
+        if term in actionable_set:
+            continue
+        if term in STOPWORDS or term in LOW_SIGNAL_TERMS or term in _CONTEXT_NOISE:
+            continue
+        if _looks_numeric_or_noise(term):
+            continue
+        actionable_jd_terms.append(term)
+        actionable_set.add(term)
+
     if not actionable_jd_terms:
         actionable_jd_terms = [term for term in jd_terms_raw if term not in STOPWORDS][:30]
 
+    # 6. Extract resume terms (frequency + dictionary + context)
     resume_terms = set(_important_terms(resume_text, limit=120))
+    resume_known = _direct_scan_known_terms(resume_text)
+    resume_terms |= resume_known
+    # Also run generic context extraction on resume so domain-specific terms
+    # (e.g. "Epic", "HIPAA", "ADP") in the resume get picked up too.
+    resume_context = set()
+    resume_context |= _extract_contextual_skills(resume_text)
+    resume_context |= _extract_uppercase_acronyms(resume_text)
+    resume_context |= _extract_proper_noun_tools(resume_text)
+    resume_context -= STOPWORDS
+    resume_context -= _CONTEXT_NOISE
+    resume_terms |= resume_context
 
-    # Build canonical synonym sets so "JS" in resume matches "JavaScript" in JD
+    # 7. Build canonical synonym sets so "JS" in resume matches "JavaScript" in JD
     def _canonical(term: str) -> str:
         return TERM_SYNONYMS.get(term.lower(), term.lower())
 
     resume_canonical = {_canonical(t) for t in resume_terms} | resume_terms
-    missing_terms = [term for term in actionable_jd_terms if term not in resume_terms and _canonical(term) not in resume_canonical][:18]
-    matched_terms = [term for term in actionable_jd_terms if term in resume_terms or _canonical(term) in resume_canonical][:18]
 
-    # Weighted overlap: hard skills count more than generic terms
+    # 8. Prioritise and deduplicate
     _hard_skill_set = TOOL_TERMS | ROLE_SIGNAL_TERMS | DOMAIN_TERMS
-    _matched_weight = sum(2.0 if term in _hard_skill_set else 1.0 for term in matched_terms)
-    _total_weight = sum(2.0 if term in _hard_skill_set else 1.0 for term in actionable_jd_terms)
+
+    def _term_priority(term: str) -> tuple[int, int, int]:
+        """Lower = higher priority.  Known/context skills in requirements first."""
+        is_known = 0 if term in _hard_skill_set else (0 if term in jd_context_skills else 1)
+        in_req = 0 if term in jd_req_known_terms or term in jd_context_skills else 1
+        # Longer terms are usually more specific / useful
+        length_bonus = 0 if len(term) > 5 else 1
+        return (is_known, in_req, length_bonus)
+
+    actionable_jd_terms.sort(key=_term_priority)
+    # Deduplicate: suppress compound parts, canonical duplicates
+    _compound_parts: set[str] = set()
+    for t in actionable_jd_terms:
+        if " " in t:
+            for word in t.lower().split():
+                _compound_parts.add(word)
+
+    _seen: set[str] = set()
+    _deduped: list[str] = []
+    for t in actionable_jd_terms:
+        canon = _canonical(t)
+        if t not in _seen and canon not in _seen:
+            if " " not in t and t in _compound_parts:
+                continue
+            _deduped.append(t)
+            _seen.add(t)
+            _seen.add(canon)
+    actionable_jd_terms = _deduped
+
+    # For multi-word terms (from context extraction), also check if the term
+    # appears verbatim in the resume text.  This handles cases like "iv therapy"
+    # or "wound care" where the resume lists them but tokenisation splits them.
+    def _term_in_resume(term: str) -> bool:
+        if term in resume_terms or _canonical(term) in resume_canonical:
+            return True
+        # Text-based match for multi-word and context-extracted terms
+        if " " in term or term in jd_context_skills:
+            if re.search(r"\b" + re.escape(term) + r"\b", resume_lower):
+                return True
+            canon = _canonical(term)
+            if canon != term and re.search(r"\b" + re.escape(canon) + r"\b", resume_lower):
+                return True
+            # Fallback for multi-word terms: if ALL constituent words appear
+            # in the resume (possibly in different order/context), count as match.
+            # E.g. "epic emr" → resume has both "epic" and "emr" separately.
+            if " " in term:
+                words = [w for w in term.split() if len(w) >= 2 and w not in STOPWORDS]
+                if words and all(
+                    w in resume_terms or re.search(r"\b" + re.escape(w) + r"\b", resume_lower)
+                    for w in words
+                ):
+                    return True
+        return False
+
+    missing_terms = [term for term in actionable_jd_terms if not _term_in_resume(term)][:25]
+    matched_terms = [term for term in actionable_jd_terms if _term_in_resume(term)][:25]
+
+    # 9. Weighted overlap: known/context skills count more than generic terms
+    _weight_set = _hard_skill_set | jd_context_skills
+    _matched_weight = sum(3.0 if term in _weight_set else 1.0 for term in matched_terms)
+    _total_weight = sum(3.0 if term in _weight_set else 1.0 for term in actionable_jd_terms)
     overlap_ratio = (_matched_weight / max(_total_weight, 1.0)) if actionable_jd_terms else 0.0
     job_match = int(round(min(max(overlap_ratio, 0.0), 1.0) * 100))
 
