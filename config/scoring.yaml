@@ -1,0 +1,49 @@
+version: 1
+
+confidence:
+  low_confidence_threshold: 0.55
+  needs_user_input_threshold: 0.45
+
+matching:
+  weights:
+    must_have: 0.75
+    nice_to_have: 0.25
+  evidence_strength_weights:
+    "0": 0.0
+    "1": 0.4
+    "2": 0.7
+    "3": 1.0
+  similarity_thresholds:
+    weak_match: 0.55
+    strong_match: 0.72
+
+decisions:
+  apply:
+    min_must_have_coverage: 0.70
+    max_ats_risk: 0.45
+    min_confidence: 0.60
+  fix:
+    min_must_have_coverage: 0.45
+    max_ats_risk: 0.60
+    min_confidence: 0.50
+
+penalties:
+  ats:
+    multi_column: 0.15
+    tables: 0.10
+    icons_graphics: 0.05
+    missing_contact: 0.20
+    heading_inconsistency: 0.10
+  credibility:
+    high_repetition: 0.10
+    high_generic_phrase_density: 0.10
+
+domains:
+  metric_expectation:
+    tech: high
+    sales: high
+    marketing: medium
+    finance: medium
+    hr: low
+    healthcare: low
+    other: medium

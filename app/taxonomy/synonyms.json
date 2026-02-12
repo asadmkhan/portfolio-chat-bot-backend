@@ -1,0 +1,23 @@
+{
+  "stakeholder management": "skill_stakeholder_mgmt",
+  "client management": "skill_stakeholder_mgmt",
+  "financial reporting": "skill_fin_reporting",
+  "finance reporting": "skill_fin_reporting",
+  "sales pipeline": "skill_sales_pipeline",
+  "pipeline management": "skill_sales_pipeline",
+  "lead generation": "skill_lead_generation",
+  "candidate sourcing": "skill_candidate_sourcing",
+  "talent acquisition": "skill_candidate_sourcing",
+  "patient care": "skill_patient_care",
+  "clinical documentation": "skill_clinical_documentation",
+  "seo": "skill_seo",
+  "search engine optimization": "skill_seo",
+  "content strategy": "skill_content_strategy",
+  "python": "skill_python",
+  "data analysis": "skill_data_analysis",
+  "budget forecasting": "skill_budget_forecasting",
+  "forecasting": "skill_budget_forecasting",
+  "crm": "skill_crm",
+  "customer relationship management": "skill_crm"
+}
+
