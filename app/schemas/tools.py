@@ -72,6 +72,29 @@ class ScoreCard(BaseModel):
     ats_readability: int = Field(ge=0, le=100)
 
 
+class ATSBlockerEvidence(BaseModel):
+    spans: list[dict[str, Any]] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
+
+
+class ATSBlocker(BaseModel):
+    id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=200)
+    severity: Severity
+    explanation: str = Field(min_length=1, max_length=1200)
+    evidence: ATSBlockerEvidence = Field(default_factory=ATSBlockerEvidence)
+    suggested_fix: str = Field(min_length=1, max_length=1200)
+
+
+class ATSCheckerOutput(BaseModel):
+    ats_risk_level: Literal["low", "medium", "high"]
+    blockers: list[ATSBlocker] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+    confidence_reasons: list[str] = Field(default_factory=list)
+    needs_user_input: bool = False
+    errors: list[str] = Field(default_factory=list)
+
+
 class ToolResponse(BaseModel):
     recommendation: Recommendation
     confidence: float = Field(ge=0.0, le=1.0)

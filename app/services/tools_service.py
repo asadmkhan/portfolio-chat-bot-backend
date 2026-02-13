@@ -4739,7 +4739,10 @@ def _build_ats_report(
                     term_lower = term.lower()
                     words = [word for word in term_lower.split() if len(word) > 1]
                     if term_lower in req_text_lower or (words and all(word in req_text_lower for word in words)):
-                        hard_term_requirement_evidence.setdefault(term, []).append(requirement.evidence.model_dump(mode="json"))
+                        span = requirement.evidence.model_dump(mode="json")
+                        # Keep hard-skill evidence focused on the matched term to avoid noisy JD snippets.
+                        span["text_snippet"] = term
+                        hard_term_requirement_evidence.setdefault(term, []).append(span)
 
     soft_terms = sorted({term for term in SOFT_SKILL_TERMS if term in jd_lower})
     soft_total = len(soft_terms)
@@ -5198,7 +5201,17 @@ def _build_ats_report(
         ),
     ]
 
-    hard_missing_terms = sorted(list(missing_terms.intersection(set(hard_terms))))[:3]
+    _hard_missing_pool = list(missing_terms.intersection(set(hard_terms)))
+    _os_priority_terms = {"windows", "macos", "linux"}
+    _hard_priority_terms = _os_priority_terms | {"screen recording", "annotate screenshots", "bounding boxes", "capture tool"}
+    hard_missing_terms = sorted(
+        _hard_missing_pool,
+        key=lambda term: (
+            0 if term.lower() in _os_priority_terms else (1 if term.lower() in _hard_priority_terms else 2),
+            hard_terms.index(term) if term in hard_terms else 999,
+            term.lower(),
+        ),
+    )[:3]
     hard_rationale = (
         f"Matched hard terms={hard_matched}/{hard_display_denominator}. "
         f"JD confidence is low ({jd_token_count} tokens < {jd_min_tokens_for_hard_skills}), hard-skill match is low-confidence."
