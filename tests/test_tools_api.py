@@ -5,6 +5,10 @@ from unittest.mock import patch
 from types import SimpleNamespace
 from zipfile import ZipFile
 
+# Keep API tests deterministic and fast by default.
+os.environ.setdefault("TOOLS_LLM_ENABLED", "0")
+os.environ.setdefault("TOOLS_STRICT_LLM", "0")
+
 from fastapi.testclient import TestClient
 
 from app.core.tools_rate_limit import clear_tools_rate_limit_events
@@ -523,15 +527,24 @@ class ToolsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("AI quality mode", response.json()["detail"])
 
-    def test_strict_llm_mode_blocks_ats_when_validation_unavailable(self):
+    def test_strict_llm_mode_keeps_ats_checker_deterministic(self):
         with patch.dict(
             os.environ,
             {"TOOLS_STRICT_LLM": "true", "TOOLS_LLM_ENABLED": "0"},
             clear=False,
         ):
             response = self.client.post("/v1/tools/ats-checker", json=self.payload)
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("AI quality mode", response.json()["detail"])
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        report = body.get("details", {}).get("ats_report", {})
+        content_checks = []
+        for category in report.get("categories") or []:
+            if category.get("id") == "content":
+                content_checks = category.get("checks") or []
+                break
+        grammar = next((item for item in content_checks if item.get("id") == "spelling_grammar"), {})
+        metrics = grammar.get("metrics") or {}
+        self.assertEqual(metrics.get("validation_mode"), "deterministic")
 
     def test_ats_layout_profile_impacts_score(self):
         base_payload = dict(self.payload)
@@ -654,6 +667,36 @@ class ToolsApiTests(unittest.TestCase):
         lowered = " ".join(flag.lower() for flag in parsing_flags)
         self.assertNotIn("table", lowered)
         self.assertNotIn("column", lowered)
+
+    def test_ats_parse_rate_metrics_use_scalar_reason_summary_and_reasoned_examples(self):
+        payload = dict(self.payload)
+        payload["resume_text"] = (
+            "Jane Doe\n"
+            "Email jane@example.com\n"
+            "Phone +1 555 100 2200\n"
+            "Skill | Level | Years\n"
+            "Python | Advanced | 8\n"
+            "SQL | Intermediate | 5\n"
+        )
+        response = self.client.post("/v1/tools/ats-checker", json=payload)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        parse_check = self._get_ats_check(body, "content", "ats_parse_rate")
+        metrics = parse_check.get("metrics") or {}
+        self.assertIsInstance(metrics.get("parsing_penalty_reason_count"), int)
+        self.assertIsInstance(metrics.get("parsing_penalty_reason_titles"), str)
+        reasons = metrics.get("parsing_penalty_reasons") or []
+        self.assertTrue(all(isinstance(item, str) for item in reasons))
+        reason_details = metrics.get("parsing_penalty_reasons_detail") or []
+        self.assertTrue(all(isinstance(item, dict) for item in reason_details))
+        issue_examples = parse_check.get("issue_examples") or []
+        self.assertTrue(issue_examples)
+        self.assertFalse(
+            any(
+                (item.get("reason") or "").strip().lower() == "issue detected by ats heuristic evaluation."
+                for item in issue_examples
+            )
+        )
 
     def test_vpn_tool_endpoint(self):
         response = self.client.post(

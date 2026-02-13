@@ -15,12 +15,32 @@ import mimetypes
 import os
 import re
 import socket
-from typing import Any, Callable
+import tempfile
+import unicodedata
+from typing import Any, Callable, Literal
 from urllib.parse import parse_qs, urlparse, urlunparse
 import defusedxml.ElementTree as ET
 from zipfile import ZipFile
 
+from app.core.config.scoring import get_scoring_value
+from app.features import (
+    AnalysisUnit,
+    build_analysis_units,
+    build_parsing_report,
+    build_skill_alignment,
+    classify_domain_from_jd,
+    classify_domain_from_resume,
+    summarize_analysis_units,
+)
+from app.normalize.normalize_jd import normalize_jd
+from app.normalize.normalize_resume import normalize_resume
+from app.parsing.models import ParsedDoc
+from app.parsing.parse import parse_document
+from app.schemas.normalized import EvidenceSpan, NormalizedJD, NormalizedResume
 from app.schemas.tools import (
+    ATSBlocker,
+    ATSBlockerEvidence,
+    ATSCheckerOutput,
     ExtractJobRequest,
     ExtractJobResponse,
     ExtractResumeUrlRequest,
@@ -33,6 +53,7 @@ from app.schemas.tools import (
     ResumeLayoutProfile,
     RiskItem,
     ScoreCard,
+    Severity,
     SummarizerRequest,
     SummarizerResponse,
     ToolRequest,
@@ -54,6 +75,7 @@ from app.services.tools_llm import (
     vision_extract_text,
 )
 from app.services import tools_file_security as file_security
+from app.taxonomy import TaxonomyProvider, get_default_taxonomy_provider
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +210,7 @@ TERM_SYNONYMS: dict[str, str] = {
     "version control": "git", "vcs": "git",
     "conversion rate optimization": "cro", "conversion optimization": "cro", "cro": "cro",
     "a/b testing": "ab testing", "ab testing": "ab testing", "split testing": "ab testing",
+    "macintosh": "macos", "mac": "macos", "pc": "windows", "windows pc": "windows",
 }
 
 # Multi-word terms that should be extracted as single units.
@@ -965,6 +988,39 @@ def _line_snippets_with_term(text: str, term: str, *, max_items: int = 2) -> lis
     return snippets
 
 
+def _line_snippets_for_term_with_aliases(text: str, term: str, *, max_items: int = 2) -> list[str]:
+    if not term:
+        return []
+    canonical_key = _canonical_skill_key(term)
+    canonical_term = _canonical_term(term)
+    search_terms: list[str] = []
+    for candidate in [term.lower().strip(), canonical_term, canonical_key]:
+        if candidate and candidate not in search_terms:
+            search_terms.append(candidate)
+    canonical_targets = {item for item in [canonical_key, canonical_term] if item}
+    if canonical_targets:
+        for alias, canonical in TERM_SYNONYMS.items():
+            if canonical not in canonical_targets:
+                continue
+            alias_clean = alias.strip().lower()
+            if not alias_clean or len(alias_clean) < 2:
+                continue
+            if alias_clean not in search_terms:
+                search_terms.append(alias_clean)
+
+    snippets: list[str] = []
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        lower_line = cleaned.lower()
+        if any(candidate in lower_line for candidate in search_terms):
+            snippets.append(_safe_str(cleaned, max_len=220))
+            if len(snippets) >= max_items:
+                break
+    return snippets
+
+
 def _term_evidence_maps(
     *,
     resume_text: str,
@@ -975,7 +1031,7 @@ def _term_evidence_maps(
 ) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, dict[str, list[str]]]]:
     matched_term_evidence: dict[str, list[str]] = {}
     for term in matched_terms[:18]:
-        snippets = _line_snippets_with_term(resume_text, term, max_items=3)
+        snippets = _line_snippets_for_term_with_aliases(resume_text, term, max_items=3)
         if snippets:
             matched_term_evidence[term] = snippets
 
@@ -1484,6 +1540,14 @@ def _clamp_int(value: Any, default: int, min_value: int, max_value: int) -> int:
         parsed = int(float(value))
     except (TypeError, ValueError):
         return default
+    return max(min_value, min(max_value, parsed))
+
+
+def _safe_optional_int(value: Any, min_value: int, max_value: int) -> int | None:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return None
     return max(min_value, min(max_value, parsed))
 
 
@@ -2160,41 +2224,322 @@ def _parsing_penalty(
     layout_profile: dict[str, Any] | None = None,
     layout_fit: dict[str, Any] | None = None,
 ) -> int:
+    details = _parsing_penalty_details(
+        resume_text,
+        layout_profile=layout_profile,
+        layout_fit=layout_fit,
+        doc_id=None,
+    )
+    return _clamp_int(details.get("penalty"), default=0, min_value=0, max_value=80)
+
+
+def _first_non_empty_line(lines: list[str]) -> tuple[int | None, str]:
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped:
+            return idx, stripped
+    return None, ""
+
+
+def _first_matching_line(
+    lines: list[str],
+    *,
+    pattern: str | None = None,
+    contains: str | None = None,
+    exclude_contact_pipe: bool = False,
+) -> tuple[int | None, str]:
+    compiled = re.compile(pattern, flags=re.IGNORECASE) if pattern else None
+    contains_lower = contains.lower() if contains else None
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if exclude_contact_pipe and _is_contact_pipe_line(stripped):
+            continue
+        lower = stripped.lower()
+        if compiled and compiled.search(stripped):
+            return idx, stripped
+        if contains_lower and contains_lower in lower:
+            return idx, stripped
+    if exclude_contact_pipe:
+        for idx, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if stripped and not _is_contact_pipe_line(stripped):
+                return idx, stripped
+    return _first_non_empty_line(lines)
+
+
+def _penalty_reason_item(
+    *,
+    reason_id: str,
+    title: str,
+    detail: str,
+    weight: int,
+    doc_id: str | None,
+    line_no: int | None,
+    snippet: str,
+) -> dict[str, Any]:
+    return {
+        "id": reason_id,
+        "title": title,
+        "weight": _clamp_int(weight, default=0, min_value=0, max_value=80),
+        "detail": _safe_str(detail, max_len=260),
+        "evidence": {
+            "spans": [
+                {
+                    "doc_id": _safe_str(doc_id, max_len=64) or None,
+                    "page": None,
+                    "line_start": line_no,
+                    "line_end": line_no,
+                    "bbox": None,
+                    "text_snippet": _safe_str(snippet, max_len=260),
+                }
+            ],
+            "claim_ids": [],
+        },
+    }
+
+
+def _parsing_penalty_details(
+    resume_text: str,
+    *,
+    layout_profile: dict[str, Any] | None = None,
+    layout_fit: dict[str, Any] | None = None,
+    doc_id: str | None = None,
+) -> dict[str, Any]:
     resume_lower = resume_text.lower()
     text_signals = _text_layout_signals(resume_text)
+    lines = resume_text.splitlines()
     penalty = 0
-    if text_signals["probable_table"] or "table" in resume_lower or "graphic" in resume_lower:
-        penalty += 8
+    reasons: list[dict[str, Any]] = []
+
+    def add_reason(
+        *,
+        reason_id: str,
+        title: str,
+        detail: str,
+        weight: int,
+        pattern: str | None = None,
+        contains: str | None = None,
+        exclude_contact_pipe: bool = False,
+    ) -> None:
+        nonlocal penalty
+        if weight <= 0:
+            return
+        line_no, snippet = _first_matching_line(
+            lines,
+            pattern=pattern,
+            contains=contains,
+            exclude_contact_pipe=exclude_contact_pipe,
+        )
+        reasons.append(
+            _penalty_reason_item(
+                reason_id=reason_id,
+                title=title,
+                detail=detail,
+                weight=weight,
+                doc_id=doc_id,
+                line_no=line_no,
+                snippet=snippet or "Resume content",
+            )
+        )
+        penalty += weight
+
+    mentions_table_like_text = bool(re.search(r"\b(?:table|tables|tabular|grid)\b", resume_lower))
+    mentions_graphic_text = bool(re.search(r"\b(?:graphic|graphics)\b", resume_lower))
+    if text_signals["probable_table"] or mentions_table_like_text or mentions_graphic_text:
+        add_reason(
+            reason_id="table_like_structure",
+            title="Table-like text structure",
+            detail="Detected table-like formatting pattern that can reduce parser field mapping.",
+            weight=8,
+            pattern=r"\|.*\|",
+            contains="table",
+            exclude_contact_pipe=True,
+        )
     if text_signals["wide_space_lines"] >= 10 and text_signals["tab_line_count"] >= 3:
-        penalty += 3
+        add_reason(
+            reason_id="wide_space_tab_mix",
+            title="Wide spacing and tab patterns",
+            detail="Detected repeated large spacing/tab structures that can break ATS token grouping.",
+            weight=3,
+            pattern=r"\t|\s{5,}",
+        )
     if not EMAIL_RE.search(resume_text):
-        penalty += 6
+        add_reason(
+            reason_id="missing_email",
+            title="Missing email signal",
+            detail="No parseable email was detected, reducing ATS contact extraction confidence.",
+            weight=6,
+        )
     if not PHONE_RE.search(resume_text):
-        penalty += 4
+        add_reason(
+            reason_id="missing_phone",
+            title="Missing phone signal",
+            detail="No parseable phone number was detected in resume content.",
+            weight=4,
+        )
 
     if layout_profile:
         detected_layout = _effective_detected_layout(layout_profile, resume_text)
         strong_layout = _has_strong_layout_evidence(layout_profile)
         confidence = _clamp_float(layout_profile.get("confidence"), default=0.0, min_value=0.0, max_value=1.0)
         if detected_layout == "multi_column":
-            penalty += 8 if strong_layout or confidence >= 0.72 else 4
+            layout_weight = 8 if strong_layout or confidence >= 0.72 else 4
+            add_reason(
+                reason_id="multi_column_layout",
+                title="Multi-column layout risk",
+                detail="Detected multi-column layout profile, which can reduce ATS reading-order reliability.",
+                weight=layout_weight,
+                pattern=r"\S\s{5,}\S",
+            )
         elif detected_layout == "hybrid":
-            penalty += 4 if strong_layout or confidence >= 0.62 else 2
+            layout_weight = 4 if strong_layout or confidence >= 0.62 else 2
+            add_reason(
+                reason_id="hybrid_layout",
+                title="Hybrid layout risk",
+                detail="Detected hybrid layout profile with mixed reading flow.",
+                weight=layout_weight,
+                pattern=r"\S\s{5,}\S",
+            )
+
         complexity_score = _clamp_int(layout_profile.get("complexity_score"), default=20, min_value=0, max_value=100)
         table_count = _clamp_int(layout_profile.get("table_count"), default=0, min_value=0, max_value=200)
         header_density = _clamp_float(layout_profile.get("header_link_density"), default=0.0, min_value=0.0, max_value=1.0)
         complexity_penalty = int(round(complexity_score / 18))
         if not strong_layout:
             complexity_penalty = max(0, complexity_penalty - 2)
-        penalty += complexity_penalty
-        penalty += min(8, table_count * 3) if strong_layout else min(4, table_count * 2)
+        if complexity_penalty > 0:
+            add_reason(
+                reason_id="layout_complexity",
+                title="Layout complexity penalty",
+                detail=f"Complexity score={complexity_score} contributes ATS parsing friction.",
+                weight=complexity_penalty,
+            )
+        table_penalty = min(8, table_count * 3) if strong_layout else min(4, table_count * 2)
+        if table_penalty > 0:
+            add_reason(
+                reason_id="table_count_penalty",
+                title="Table count penalty",
+                detail=f"Detected table_count={table_count}, which increases parser ambiguity.",
+                weight=table_penalty,
+                pattern=r"\|.*\|",
+                exclude_contact_pipe=True,
+            )
         if header_density >= 0.5:
-            penalty += 4
+            add_reason(
+                reason_id="header_link_density",
+                title="Dense header links",
+                detail=f"Header link density={round(header_density, 2)} can confuse ATS contact field parsing.",
+                weight=4,
+                pattern=r"https?://|www\.|linkedin\.com|github\.com",
+            )
 
     if layout_fit:
-        penalty += _clamp_int(layout_fit.get("penalty"), default=0, min_value=0, max_value=30)
+        fit_penalty = _clamp_int(layout_fit.get("penalty"), default=0, min_value=0, max_value=30)
+        if fit_penalty > 0:
+            add_reason(
+                reason_id="region_role_layout_fit",
+                title="Region-role layout fit penalty",
+                detail=_safe_str(layout_fit.get("format_recommendation"), max_len=220) or "Layout fit penalty applied by regional ATS profile.",
+                weight=fit_penalty,
+            )
 
-    return _clamp_int(penalty, default=0, min_value=0, max_value=80)
+    return {
+        "penalty": _clamp_int(penalty, default=0, min_value=0, max_value=80),
+        "reasons": reasons,
+    }
+
+
+def _ats_parse_reason_fix(reason_id: str, default_fix: str) -> str:
+    fixes = {
+        "multi_column_layout": "Use a single-column structure and avoid split left/right content blocks.",
+        "hybrid_layout": "Simplify mixed layout zones into one clear reading flow.",
+        "table_like_structure": "Replace pipe/table-like rows with plain text bullets or section headings.",
+        "table_count_penalty": "Remove table/grid structures and keep content in simple text sections.",
+        "header_link_density": "Keep only essential header links (for example, LinkedIn + portfolio) and avoid dense separators.",
+        "wide_space_tab_mix": "Replace tabs and oversized spacing with normal sentence/bullet formatting.",
+        "missing_email": "Add one plain-text professional email near the top of the resume.",
+        "missing_phone": "Add one plain-text phone number near the top of the resume.",
+        "layout_complexity": "Reduce decorative or dense layout elements to improve ATS mapping reliability.",
+        "region_role_layout_fit": "Adjust format to a simpler ATS-safe structure for the target region and role.",
+    }
+    return fixes.get(reason_id, default_fix)
+
+
+def _ats_parse_reason_severity(weight: Any) -> str:
+    value = _clamp_int(weight, default=0, min_value=0, max_value=80)
+    if value >= 6:
+        return "high"
+    if value >= 3:
+        return "medium"
+    return "low"
+
+
+def _ats_parse_recommendation_from_reasons(reasons: list[dict[str, Any]], default_fix: str) -> str:
+    ranked = sorted(
+        [reason for reason in reasons if isinstance(reason, dict)],
+        key=lambda item: _clamp_int(item.get("weight"), default=0, min_value=0, max_value=80),
+        reverse=True,
+    )
+    if not ranked:
+        return default_fix
+    top_reason = ranked[0]
+    reason_id = _safe_str(top_reason.get("id"), max_len=80)
+    return _ats_parse_reason_fix(reason_id, default_fix)
+
+
+def _ats_parse_issue_examples_from_reasons(
+    reasons: list[dict[str, Any]],
+    *,
+    default_fix: str,
+    max_items: int = 4,
+) -> list[dict[str, Any]]:
+    ranked = sorted(
+        [reason for reason in reasons if isinstance(reason, dict)],
+        key=lambda item: _clamp_int(item.get("weight"), default=0, min_value=0, max_value=80),
+        reverse=True,
+    )
+    examples: list[dict[str, Any]] = []
+    for reason in ranked[:max_items]:
+        reason_id = _safe_str(reason.get("id"), max_len=80)
+        detail = _safe_str(reason.get("detail"), max_len=240) or _safe_str(reason.get("title"), max_len=120)
+        evidence = reason.get("evidence") if isinstance(reason.get("evidence"), dict) else {}
+        spans = evidence.get("spans") if isinstance(evidence.get("spans"), list) else []
+        snippet = ""
+        if spans and isinstance(spans[0], dict):
+            snippet = _safe_str(spans[0].get("text_snippet"), max_len=260)
+        if not snippet:
+            snippet = _safe_str(reason.get("title"), max_len=260) or "Layout/parsing signal"
+        examples.append(
+            {
+                "text": snippet,
+                "reason": detail or "Parsing risk detected.",
+                "suggestion": _ats_parse_reason_fix(reason_id, default_fix),
+                "severity": _ats_parse_reason_severity(reason.get("weight")),
+                "evidence": {
+                    "spans": spans[:2] if spans else [],
+                    "claim_ids": [],
+                },
+            }
+        )
+    return examples
+
+
+def _ats_parse_evidence_from_reasons(reasons: list[dict[str, Any]], *, max_items: int = 4) -> list[str]:
+    evidence: list[str] = []
+    for reason in reasons:
+        if not isinstance(reason, dict):
+            continue
+        reason_evidence = reason.get("evidence") if isinstance(reason.get("evidence"), dict) else {}
+        spans = reason_evidence.get("spans") if isinstance(reason_evidence.get("spans"), list) else []
+        if spans and isinstance(spans[0], dict):
+            snippet = _safe_str(spans[0].get("text_snippet"), max_len=240)
+            if snippet:
+                evidence.append(snippet)
+                if len(evidence) >= max_items:
+                    break
+    return evidence
 
 
 def _count_repetition_issues(resume_text: str) -> int:
@@ -2289,9 +2634,44 @@ STRONG_LAYOUT_SIGNAL_HINTS = {
 }
 
 
+def _is_contact_pipe_line(line: str) -> bool:
+    stripped = _safe_str(line, max_len=400).strip()
+    if "|" not in stripped or stripped.count("|") < 2:
+        return False
+    segments = [segment.strip() for segment in stripped.split("|") if segment.strip()]
+    if len(segments) < 2:
+        return False
+    lowered = stripped.lower()
+    marker_hits = 0
+    if EMAIL_RE.search(stripped):
+        marker_hits += 1
+    if PHONE_RE.search(stripped):
+        marker_hits += 1
+    if any(token in lowered for token in {"linkedin.com", "github.com", "http://", "https://", "www."}):
+        marker_hits += 1
+    if "@" in stripped:
+        marker_hits += 1
+    if re.search(r"\+\d{6,}", stripped):
+        marker_hits += 1
+    short_segments = sum(1 for segment in segments if len(_tokenize(segment)) <= 6)
+    compact_line = len(_tokenize(stripped)) <= 26
+    return marker_hits >= 2 and short_segments >= max(1, len(segments) - 1) and compact_line
+
+
+def _is_table_like_pipe_line(line: str) -> bool:
+    stripped = _safe_str(line, max_len=400).strip()
+    if stripped.count("|") < 2:
+        return False
+    if _is_contact_pipe_line(stripped):
+        return False
+    segments = [segment.strip() for segment in stripped.split("|") if segment.strip()]
+    return len(segments) >= 3
+
+
 def _text_layout_signals(resume_text: str) -> dict[str, Any]:
     lines = [line.rstrip() for line in resume_text.splitlines() if line.strip()]
-    pipe_lines = [line for line in lines if line.count("|") >= 2]
+    contact_pipe_lines = [line for line in lines if _is_contact_pipe_line(line)]
+    pipe_lines = [line for line in lines if _is_table_like_pipe_line(line)]
     pipe_counts = [line.count("|") for line in pipe_lines]
     pipe_token_total = sum(pipe_counts)
     wide_space_lines = sum(1 for line in lines if re.search(r"\s{4,}", line))
@@ -2305,7 +2685,7 @@ def _text_layout_signals(resume_text: str) -> dict[str, Any]:
     if len(pipe_counts) >= 3:
         spread = max(pipe_counts) - min(pipe_counts)
         average = sum(pipe_counts) / max(1, len(pipe_counts))
-        consistent_pipe_pattern = spread <= 2 and average >= 3
+        consistent_pipe_pattern = spread <= 2 and average >= 2
 
     # Detect lines with dramatically different indentation (multi-column text extraction)
     # When PDFs extract multi-column text, lines often alternate between left-aligned and
@@ -2328,28 +2708,58 @@ def _text_layout_signals(resume_text: str) -> dict[str, Any]:
     # Detect lines with very different lengths interleaved (left col short, right col starts)
     line_lengths = [len(line.strip()) for line in lines if line.strip()]
     short_long_alternation = 0
+    heading_like_transitions = 0
     if len(line_lengths) >= 6:
         for i in range(len(line_lengths) - 1):
             if (line_lengths[i] < 40 and line_lengths[i + 1] >= 60) or (line_lengths[i] >= 60 and line_lengths[i + 1] < 40):
                 short_long_alternation += 1
+                first_line = lines[i].strip()
+                second_line = lines[i + 1].strip()
+                if (
+                    _is_section_title_line(first_line)
+                    or _is_section_title_line(second_line)
+                    or len(first_line.split()) <= 4
+                    or len(second_line.split()) <= 4
+                ):
+                    heading_like_transitions += 1
 
     probable_table = (
         markdown_table_lines >= 1
-        or (len(pipe_lines) >= 3 and consistent_pipe_pattern and pipe_token_total >= 10)
+        or (len(pipe_lines) >= 3 and consistent_pipe_pattern and pipe_token_total >= 6)
         or (tab_line_count >= 3 and wide_space_lines >= 4)
     )
 
-    # Detect multi-column signals from text extraction patterns
-    multi_column_text_signal = (
-        side_by_side_lines >= 5  # lines with big whitespace gaps
-        or deep_indent_lines >= 8  # many deeply indented lines (right column)
-        or (wide_space_lines >= 12 and mixed_indent_lines >= 10)
-        or (short_long_alternation >= 8 and len(line_lengths) >= 15)
+    min_signals_for_multicolumn = _clamp_int(
+        get_scoring_value("layout.min_signals_for_multicolumn", 2),
+        default=2,
+        min_value=1,
+        max_value=4,
     )
+    short_long_weight = _clamp_float(
+        get_scoring_value("layout.short_long_alternation_weight", 0.35),
+        default=0.35,
+        min_value=0.0,
+        max_value=1.0,
+    )
+    effective_short_long = max(0, short_long_alternation - heading_like_transitions)
+    short_long_signal = (effective_short_long * short_long_weight) >= 6 and len(line_lengths) >= 15
+    independent_signal_count = 0
+    if side_by_side_lines >= 5:
+        independent_signal_count += 1
+    if deep_indent_lines >= 8:
+        independent_signal_count += 1
+    if wide_space_lines >= 12 and mixed_indent_lines >= 10:
+        independent_signal_count += 1
+    if short_long_signal:
+        independent_signal_count += 1
+
+    # Detect multi-column signals from text extraction patterns.
+    multi_column_text_signal = independent_signal_count >= min_signals_for_multicolumn
 
     return {
         "line_count": len(lines),
         "pipe_line_count": len(pipe_lines),
+        "contact_pipe_line_count": len(contact_pipe_lines),
         "pipe_token_total": pipe_token_total,
         "wide_space_lines": wide_space_lines,
         "tab_line_count": tab_line_count,
@@ -2360,6 +2770,11 @@ def _text_layout_signals(resume_text: str) -> dict[str, Any]:
         "deep_indent_lines": deep_indent_lines,
         "mixed_indent_lines": mixed_indent_lines,
         "short_long_alternation": short_long_alternation,
+        "effective_short_long_alternation": effective_short_long,
+        "heading_like_transitions": heading_like_transitions,
+        "short_long_weight": short_long_weight,
+        "independent_signal_count": independent_signal_count,
+        "min_signals_for_multicolumn": min_signals_for_multicolumn,
         "multi_column_text_signal": multi_column_text_signal,
     }
 
@@ -2416,10 +2831,10 @@ def _effective_detected_layout(layout_profile: dict[str, Any], resume_text: str)
     return detected_layout
 
 
-def _safe_issue_examples(raw_value: Any, *, max_items: int = 6) -> list[dict[str, str]]:
+def _safe_issue_examples(raw_value: Any, *, max_items: int = 6) -> list[dict[str, Any]]:
     if not isinstance(raw_value, list):
         return []
-    output: list[dict[str, str]] = []
+    output: list[dict[str, Any]] = []
     for item in raw_value:
         if not isinstance(item, dict):
             continue
@@ -2431,17 +2846,401 @@ def _safe_issue_examples(raw_value: Any, *, max_items: int = 6) -> list[dict[str
             severity = "medium"
         if not text or not reason or not suggestion:
             continue
-        output.append(
-            {
-                "text": text,
-                "reason": reason,
-                "suggestion": suggestion,
-                "severity": severity,
-            }
-        )
+        normalized_item: dict[str, Any] = {
+            "text": text,
+            "reason": reason,
+            "suggestion": suggestion,
+            "severity": severity,
+        }
+        evidence = item.get("evidence")
+        if isinstance(evidence, dict):
+            spans_raw = evidence.get("spans")
+            claim_ids_raw = evidence.get("claim_ids")
+            spans: list[dict[str, Any]] = []
+            if isinstance(spans_raw, list):
+                for span in spans_raw[:4]:
+                    if not isinstance(span, dict):
+                        continue
+                    text_snippet = _safe_str(span.get("text_snippet"), max_len=260)
+                    line_start = _safe_optional_int(span.get("line_start"), min_value=1, max_value=20000)
+                    line_end = _safe_optional_int(span.get("line_end"), min_value=1, max_value=20000)
+                    if line_end is None:
+                        line_end = line_start
+                    page = _safe_optional_int(span.get("page"), min_value=1, max_value=5000)
+                    bbox_raw = span.get("bbox")
+                    bbox: list[float] | None = None
+                    if isinstance(bbox_raw, list) and len(bbox_raw) == 4:
+                        parsed_bbox: list[float] = []
+                        valid_bbox = True
+                        for value in bbox_raw:
+                            try:
+                                parsed_bbox.append(float(value))
+                            except Exception:
+                                valid_bbox = False
+                                break
+                        if valid_bbox:
+                            bbox = parsed_bbox
+                    if not text_snippet and line_start is None:
+                        continue
+                    spans.append(
+                        {
+                            "doc_id": _safe_str(span.get("doc_id"), max_len=64) or None,
+                            "page": page,
+                            "line_start": line_start,
+                            "line_end": line_end,
+                            "bbox": bbox,
+                            "text_snippet": text_snippet or text,
+                        }
+                    )
+            claim_ids = _safe_str_list(claim_ids_raw, max_items=8, max_len=64) if isinstance(claim_ids_raw, list) else []
+            if spans or claim_ids:
+                normalized_item["evidence"] = {"spans": spans, "claim_ids": claim_ids}
+        output.append(normalized_item)
         if len(output) >= max_items:
             break
     return output
+
+
+_ATC_BULLET_PREFIX_RE = re.compile(
+    r"^\s*(?:[-*]|[\u2022\uf0b7\u25AA\u25AB\u25CF\u25E6\u2043\u2023\u2219]|(?:\d+[\.\)]))\s+"
+)
+_ATC_WHITESPACE_CHARS = {
+    "\u00a0",
+    "\u1680",
+    "\u2000",
+    "\u2001",
+    "\u2002",
+    "\u2003",
+    "\u2004",
+    "\u2005",
+    "\u2006",
+    "\u2007",
+    "\u2008",
+    "\u2009",
+    "\u200a",
+    "\u202f",
+    "\u205f",
+    "\u3000",
+}
+_ATC_DASH_MAP = str.maketrans(
+    {
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2015": "-",
+        "\u2212": "-",
+    }
+)
+_ATC_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_ATC_FRAGMENT_START_RE = re.compile(
+    r"^(?:have|has|had|having|worked|managed|completed|led|built|developed|implemented|coordinated|handled|assisted)\b",
+    re.IGNORECASE,
+)
+_ATC_FRAGMENT_CONTINUATION_RE = re.compile(
+    r"^(?:and|or|with|using|via|for|to|of|in|on|across|through|including)\b",
+    re.IGNORECASE,
+)
+_JD_HARD_NOISE_TERMS = {
+    "resume",
+    "access",
+    "comfort",
+    "comfortable",
+    "independently",
+    "independent",
+    "deadlines",
+    "deadline",
+    "support",
+    "resources",
+    "application",
+    "process",
+    "interview",
+    "submit",
+    "upload",
+    "form",
+    "team",
+    "daily",
+    "commitment",
+    "profile",
+    "professional",
+    "detail",
+    "ability",
+    "capable",
+    "experience",
+    "tasks",
+    "tools",
+    "tool",
+}
+_JD_SOFT_PHRASE_HINTS = {
+    "detail oriented",
+    "detail-oriented",
+    "independently",
+    "tight deadlines",
+    "fluent english",
+    "language skills",
+    "communication",
+}
+_JD_HARD_ANCHOR_TOKENS = {
+    "windows",
+    "macos",
+    "linux",
+    "screen",
+    "recording",
+    "annotate",
+    "annotation",
+    "screenshot",
+    "screenshots",
+    "bounding",
+    "boxes",
+    "capture",
+    "tool",
+    "tools",
+    "staging",
+    "instructions",
+    "workflow",
+    "workflows",
+    "qa",
+    "software",
+    "platform",
+    "platforms",
+    "ui",
+}
+_JD_HARD_STOP_TOKENS = {
+    "strong",
+    "familiarity",
+    "familiar",
+    "professional",
+    "software",
+    "tool",
+    "tools",
+    "including",
+    "with",
+    "to",
+    "and",
+    "or",
+    "the",
+    "a",
+    "an",
+    "of",
+    "for",
+    "in",
+    "on",
+    "required",
+    "requirement",
+    "requirements",
+    "must",
+    "nice",
+    "plus",
+    "detail",
+    "oriented",
+    "capable",
+    "ability",
+    "comfortable",
+    "working",
+    "independently",
+    "meeting",
+    "tight",
+    "deadlines",
+    "deadline",
+    "prior",
+    "experience",
+    "access",
+    "physical",
+    "fresh",
+    "user",
+    "profile",
+    "if",
+    "is",
+    "are",
+    "be",
+    "can",
+    "could",
+    "should",
+    "will",
+    "would",
+}
+_JD_HARD_ALLOWED_SINGLE_TOKENS = {
+    "windows",
+    "macos",
+    "linux",
+    "qa",
+    "seo",
+    "sql",
+    "python",
+    "docker",
+    "aws",
+    "azure",
+    "gcp",
+}
+_JD_HARD_ACTION_HINTS = {
+    "screen",
+    "recording",
+    "annotate",
+    "annotation",
+    "screenshot",
+    "screenshots",
+    "bounding",
+    "boxes",
+    "capture",
+    "staging",
+    "instructions",
+    "workflow",
+    "workflows",
+    "documentation",
+    "documenting",
+    "qa",
+}
+_JD_HARD_CANONICAL_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"\bwindows(?:\s+pc)?\b", "windows"),
+    (r"\b(?:macos|macintosh|mac)\b", "macos"),
+    (r"\blinux\b", "linux"),
+    (r"\b(?:record(?:ing)?\s+(?:screen|sessions?)|screen\s+recording)\b", "screen recording"),
+    (r"\bannotat(?:e|ing|ion)\s+screens?\b", "annotate screenshots"),
+    (r"\bbounding\s+boxes?\b", "bounding boxes"),
+    (r"\bcapture\s+tool\b", "capture tool"),
+    (r"\bstaging\s+instructions?\b", "staging instructions"),
+    (r"\bquality\s+assurance\b", "qa"),
+    (r"\bqa\b", "qa"),
+    (r"\bdata\s+collection\b", "data collection"),
+    (r"\bdata\s+annotation\b", "data annotation"),
+    (r"\b(?:document(?:ing|ation)?|record(?:ing)?)\s+workflows?\b", "workflow documentation"),
+)
+
+
+def _normalize_resume_analysis_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.replace("\u00ad", "")
+    normalized = normalized.translate(_ATC_DASH_MAP)
+
+    chars: list[str] = []
+    for char in normalized:
+        if char in _ATC_WHITESPACE_CHARS:
+            chars.append(" ")
+            continue
+        category = unicodedata.category(char)
+        if category == "Cf":
+            continue
+        chars.append(char)
+    normalized = "".join(chars)
+
+    cleaned_lines: list[str] = []
+    for raw_line in normalized.split("\n"):
+        line = raw_line.replace("\t", " ")
+        line = re.sub(r"[ ]{2,}", " ", line).strip()
+        cleaned_lines.append(line)
+    normalized = "\n".join(cleaned_lines)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
+def _normalize_analysis_lines(lines: list[str]) -> list[str]:
+    merged = _normalize_resume_analysis_text("\n".join(lines))
+    return [line for line in merged.splitlines() if line.strip()]
+
+
+def _looks_like_structural_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if _ATC_BULLET_PREFIX_RE.match(stripped):
+        return True
+    if _is_section_title_line(stripped):
+        return True
+    if EMAIL_RE.search(stripped) or PHONE_RE.search(stripped):
+        return True
+    return False
+
+
+def _reconstruct_bullet_units(lines: list[str]) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    def flush_current() -> None:
+        nonlocal current
+        if current is not None:
+            current["text"] = _safe_str(current.get("text"), max_len=1200)
+            if current["text"]:
+                units.append(current)
+            current = None
+
+    for index, raw_line in enumerate(lines, start=1):
+        stripped = _safe_str(raw_line, max_len=1200).strip()
+        if not stripped:
+            flush_current()
+            continue
+
+        if _ATC_BULLET_PREFIX_RE.match(stripped):
+            flush_current()
+            current = {
+                "text": _ATC_BULLET_PREFIX_RE.sub("", stripped).strip(),
+                "line_start": index,
+                "line_end": index,
+                "is_bullet": True,
+            }
+            continue
+
+        if current is not None and not _looks_like_structural_line(stripped):
+            current["text"] = f"{current['text']} {stripped}".strip()
+            current["line_end"] = index
+            continue
+
+        flush_current()
+        units.append(
+            {
+                "text": stripped,
+                "line_start": index,
+                "line_end": index,
+                "is_bullet": False,
+            }
+        )
+
+    flush_current()
+    return units
+
+
+def _sentence_units_from_lines(lines: list[str]) -> list[dict[str, Any]]:
+    sentence_units: list[dict[str, Any]] = []
+    for unit in _reconstruct_bullet_units(lines):
+        text_value = _safe_str(unit.get("text"), max_len=1200)
+        if not text_value:
+            continue
+        parts = [part.strip() for part in _ATC_SENTENCE_SPLIT_RE.split(text_value) if part.strip()]
+        if not parts:
+            parts = [text_value]
+        for part in parts:
+            sentence_units.append(
+                {
+                    "text": part,
+                    "line_start": _safe_optional_int(unit.get("line_start"), min_value=1, max_value=20000),
+                    "line_end": _safe_optional_int(unit.get("line_end"), min_value=1, max_value=20000),
+                    "is_bullet": bool(unit.get("is_bullet")),
+                }
+            )
+    return sentence_units
+
+
+def _sentence_units_from_analysis_units(analysis_units: list[AnalysisUnit]) -> list[dict[str, Any]]:
+    sentence_units: list[dict[str, Any]] = []
+    for unit in analysis_units:
+        unit_text = _safe_str(unit.text, max_len=1200)
+        if not unit_text:
+            continue
+        parts = [part.strip() for part in _ATC_SENTENCE_SPLIT_RE.split(unit_text) if part.strip()]
+        if not parts:
+            parts = [unit_text]
+        for part in parts:
+            sentence_units.append(
+                {
+                    "text": part,
+                    "line_start": unit.line_start,
+                    "line_end": unit.line_end,
+                    "is_bullet": unit.unit_type == "experience_bullet",
+                    "unit_type": unit.unit_type,
+                }
+            )
+    return sentence_units
 
 
 _SECTION_TITLE_KEYWORDS = {
@@ -2530,6 +3329,162 @@ def _is_job_title_or_role_line(line: str) -> bool:
     return False
 
 
+def _is_name_like_line(line: str) -> bool:
+    stripped = _safe_str(line, max_len=220).strip()
+    if not stripped:
+        return False
+    if any(char.isdigit() for char in stripped):
+        return False
+    if any(symbol in stripped for symbol in {"@", "http://", "https://", "linkedin", "github"}):
+        return False
+
+    words = [word for word in re.findall(r"[A-Za-z][A-Za-z'.-]*", stripped) if word]
+    if len(words) < 2 or len(words) > 5:
+        return False
+
+    role_tokens = {
+        "engineer",
+        "developer",
+        "architect",
+        "analyst",
+        "manager",
+        "director",
+        "consultant",
+        "specialist",
+        "designer",
+        "scientist",
+        "writer",
+        "marketer",
+        "lead",
+        "principal",
+        "coordinator",
+        "administrator",
+        "officer",
+    }
+    lowered = {word.lower().strip(".") for word in words}
+    if lowered.intersection(role_tokens):
+        return False
+
+    # Typical names are title-case or uppercase across all words.
+    return all(word[0:1].isupper() for word in words)
+
+
+def _select_headline_line(
+    lines: list[str],
+    *,
+    analysis_units: list[AnalysisUnit] | None = None,
+) -> str:
+    role_terms = {
+        "engineer",
+        "developer",
+        "architect",
+        "analyst",
+        "manager",
+        "director",
+        "consultant",
+        "specialist",
+        "designer",
+        "scientist",
+        "writer",
+        "marketer",
+        "coordinator",
+        "lead",
+        "principal",
+        "administrator",
+        "officer",
+    }
+
+    def _is_role_like(line: str) -> bool:
+        tokens = {token.lower().strip(".-/") for token in re.findall(r"[A-Za-z][A-Za-z'.-]*", line)}
+        return bool(tokens.intersection(role_terms))
+
+    top_lines = [
+        _safe_str(line, max_len=220).strip()
+        for line in lines[:8]
+        if _safe_str(line, max_len=220).strip()
+        and not _is_contact_or_header_line(line)
+        and not _is_section_title_line(line)
+        and not _ATC_BULLET_PREFIX_RE.match(_safe_str(line, max_len=220).strip())
+    ]
+    compact_candidates = [line for line in top_lines if 2 <= len(line.split()) <= 12]
+    if compact_candidates:
+        role_compact = [line for line in compact_candidates if _is_role_like(line)]
+        if role_compact:
+            return _safe_str(role_compact[0], max_len=220)
+        if _is_name_like_line(compact_candidates[0]) and len(compact_candidates) > 1:
+            role_after_name = next((line for line in compact_candidates[1:] if _is_role_like(line)), "")
+            if role_after_name:
+                return _safe_str(role_after_name, max_len=220)
+            return ""
+        return _safe_str(compact_candidates[0], max_len=220)
+    if top_lines:
+        role_top = [line for line in top_lines if _is_role_like(line)]
+        if role_top:
+            return _safe_str(role_top[0], max_len=220)
+        if _is_name_like_line(top_lines[0]) and len(top_lines) > 1:
+            role_after_name = next((line for line in top_lines[1:] if _is_role_like(line)), "")
+            if role_after_name:
+                return _safe_str(role_after_name, max_len=220)
+            return ""
+        return _safe_str(top_lines[0], max_len=220)
+
+    if analysis_units:
+        top_units = [
+            unit.text.strip()
+            for unit in analysis_units
+            if unit.line_start is not None
+            and unit.line_start <= 8
+            and unit.unit_type not in {"contact", "url", "section_title"}
+            and unit.text.strip()
+        ]
+        compact_units = [unit for unit in top_units if 2 <= len(unit.split()) <= 12]
+        if compact_units:
+            role_units = [unit for unit in compact_units if _is_role_like(unit)]
+            if role_units:
+                return _safe_str(role_units[0], max_len=220)
+            if _is_name_like_line(compact_units[0]) and len(compact_units) > 1:
+                role_after_name = next((unit for unit in compact_units[1:] if _is_role_like(unit)), "")
+                if role_after_name:
+                    return _safe_str(role_after_name, max_len=220)
+                return ""
+            return _safe_str(compact_units[0], max_len=220)
+        if top_units:
+            role_units = [unit for unit in top_units if _is_role_like(unit)]
+            if role_units:
+                return _safe_str(role_units[0], max_len=220)
+            if _is_name_like_line(top_units[0]) and len(top_units) > 1:
+                role_after_name = next((unit for unit in top_units[1:] if _is_role_like(unit)), "")
+                if role_after_name:
+                    return _safe_str(role_after_name, max_len=220)
+                return ""
+            return _safe_str(top_units[0], max_len=220)
+
+    fallback = _safe_str(lines[0], max_len=220) if lines else ""
+    if _is_name_like_line(fallback):
+        return ""
+    return fallback
+
+
+def _title_terms_from_jd(jd_text: str) -> list[str]:
+    terms = [
+        term
+        for term in _important_terms(jd_text, limit=16)
+        if len(term) > 3 and term not in STOPWORDS and term not in LOW_SIGNAL_TERMS
+    ]
+    return terms[:6]
+
+
+def _jd_title_signal_low_confidence(jd_text: str, title_terms: list[str]) -> bool:
+    jd_clean = _safe_str(jd_text, max_len=6000).strip()
+    if len(_tokenize(jd_clean)) < 6:
+        return True
+    if EMAIL_RE.search(jd_clean) or PHONE_RE.search(jd_clean):
+        return True
+    if len(title_terms) < 2:
+        return True
+    return False
+
+
 def _is_skill_list_line(line: str) -> bool:
     """Detect lines that are comma/pipe-separated skill or technology lists."""
     stripped = line.strip()
@@ -2557,9 +3512,23 @@ def _is_skill_list_line(line: str) -> bool:
     return False
 
 
-def _extract_candidate_experience_lines(lines: list[str]) -> list[str]:
+def _extract_candidate_experience_lines(
+    lines: list[str],
+    *,
+    analysis_units: list[AnalysisUnit] | None = None,
+) -> list[str]:
     """Extract only actual experience bullet lines from resume, excluding
     titles, headers, contact info, skill lists, role names, summaries, etc."""
+    if analysis_units:
+        unit_candidates = [
+            unit.text.strip()
+            for unit in analysis_units
+            if unit.unit_type == "experience_bullet"
+            and len(_tokenize(unit.text)) >= 3
+        ]
+        if unit_candidates:
+            return unit_candidates[:120]
+
     candidates: list[str] = []
     for index, line in enumerate(lines):
         stripped = line.strip()
@@ -2605,18 +3574,19 @@ def _count_excluded_numeric_tokens(line: str) -> int:
 
 
 def _line_has_impact_quantification(line: str) -> bool:
-    lower = line.lower()
-    if not re.search(r"\d", line):
+    normalized_line = _normalize_resume_analysis_text(line)
+    lower = normalized_line.lower()
+    if not re.search(r"\d", normalized_line):
         return False
-    if _is_contact_or_header_line(line):
+    if _is_contact_or_header_line(normalized_line):
         return False
-    if re.search(r"\b(?:19|20)\d{2}\s*[-–/]\s*(?:19|20)\d{2}\b", lower):
+    if re.search(r"\b(?:19|20)\d{2}\s*[-\u2013/]\s*(?:19|20)\d{2}\b", lower):
         # explicit date range alone should not be counted as impact
         if not any(keyword in lower for keyword in QUANT_IMPACT_KEYWORDS):
             return False
     if re.search(r"\d+\s*%", lower):
         return True
-    if re.search(r"[$€£]\s*\d", line):
+    if re.search(r"[$\u20ac\u00a3]\s*\d", normalized_line):
         return True
     if re.search(r"\b\d+(?:\.\d+)?x\b", lower):
         return True
@@ -2624,15 +3594,32 @@ def _line_has_impact_quantification(line: str) -> bool:
         if any(verb in lower for verb in IMPACT_VERB_HINTS):
             return True
     if any(keyword in lower for keyword in QUANT_IMPACT_KEYWORDS):
-        if re.search(r"\b\d+(?:[\.,]\d+)?\b", line) and any(verb in lower for verb in IMPACT_VERB_HINTS):
+        if re.search(r"\b\d+(?:[\.,]\d+)?\b", normalized_line) and any(verb in lower for verb in IMPACT_VERB_HINTS):
             return True
-    if re.search(r"\b\d+\s*(?:users|requests|transactions|incidents|tickets|deployments|pipelines)\b", lower):
+    if re.search(
+        r"\b\d+(?:[\.,]\d+)?\+?\s*(?:users?|requests?|transactions?|incidents?|tickets?|deployments?|pipelines?|"
+        r"companies?|clients?|customers?|accounts?|orders?|sites?|schools?|branches?|stores?|teams?|markets?|regions?)\b",
+        lower,
+    ):
         return True
     return False
 
 
-def _analyze_quantifying_impact(lines: list[str]) -> dict[str, Any]:
-    candidates = _extract_candidate_experience_lines(lines)
+def _analyze_quantifying_impact(
+    lines: list[str],
+    *,
+    analysis_units: list[AnalysisUnit] | None = None,
+    domain_primary: str = "other",
+) -> dict[str, Any]:
+    candidates = (
+        [
+            unit.text.strip()
+            for unit in (analysis_units or [])
+            if unit.unit_type == "experience_bullet" and len(_tokenize(unit.text)) >= 3
+        ][:120]
+        if analysis_units
+        else _extract_candidate_experience_lines(lines, analysis_units=None)
+    )
     quantified_lines: list[str] = []
     unquantified_lines: list[str] = []
     # Count non-impact numeric noise across the full resume (dates, phones, tenure-only numbers),
@@ -2648,18 +3635,72 @@ def _analyze_quantifying_impact(lines: list[str]) -> dict[str, Any]:
     scanned = len(candidates)
     quantified = len(quantified_lines)
     ratio = round((quantified / scanned), 2) if scanned else 0.0
+    default_ratio_by_domain = {
+        "tech": 0.45,
+        "sales": 0.45,
+        "marketing": 0.28,
+        "finance": 0.30,
+        "hr": 0.18,
+        "healthcare": 0.14,
+        "general": 0.24,
+        "other": 0.24,
+    }
+    domain_key = _safe_str(domain_primary, max_len=30).lower() or "other"
+    if domain_key not in default_ratio_by_domain:
+        domain_key = "other"
+    min_ratio = _clamp_float(
+        get_scoring_value(
+            f"domains.metric_expectation_thresholds.{domain_key}.min_quantified_ratio",
+            default_ratio_by_domain[domain_key],
+        ),
+        default=default_ratio_by_domain[domain_key],
+        min_value=0.05,
+        max_value=0.95,
+    )
+    max_issue_cap = _clamp_int(
+        get_scoring_value(
+            f"domains.metric_expectation_thresholds.{domain_key}.max_issue_cap",
+            6 if domain_key in {"tech", "sales"} else 4,
+        ),
+        default=6 if domain_key in {"tech", "sales"} else 4,
+        min_value=1,
+        max_value=10,
+    )
+    alternative_impact_signals = (
+        "launched",
+        "published",
+        "delivered",
+        "turnaround",
+        "stakeholder",
+        "audience",
+        "campaign",
+        "content",
+        "editorial",
+        "deadline",
+        "ownership",
+    )
+    alternative_signal_hits = sum(
+        1 for line in unquantified_lines if any(signal in line.lower() for signal in alternative_impact_signals)
+    )
+
     if scanned == 0:
-        issues = 1
-        score = 40
-    elif ratio >= 0.45:
         issues = 0
-        score = _clamp_int(int(round(ratio * 100)), default=80, min_value=0, max_value=100)
-    elif ratio >= 0.25:
+        score = 60
+    elif ratio >= min_ratio:
+        issues = 0
+        score = _clamp_int(int(round(max(ratio, min_ratio) * 100)), default=80, min_value=0, max_value=100)
+    elif ratio >= max(0.08, min_ratio * 0.70):
         issues = 1
-        score = _clamp_int(int(round(ratio * 100)), default=55, min_value=0, max_value=100)
+        score = _clamp_int(int(round(max(ratio, min_ratio * 0.85) * 100)), default=60, min_value=0, max_value=100)
     else:
         issues = min(6, max(2, scanned - quantified))
-        score = _clamp_int(int(round(ratio * 100)), default=30, min_value=0, max_value=100)
+        score = _clamp_int(int(round(ratio * 100)), default=35, min_value=0, max_value=100)
+
+    if domain_key in {"marketing", "hr", "healthcare", "other"} and alternative_signal_hits > 0 and issues > 0:
+        issues = max(0, issues - 1)
+        score = min(100, score + 10)
+
+    issues = min(issues, max_issue_cap)
 
     issue_examples = [
         {
@@ -2670,10 +3711,11 @@ def _analyze_quantifying_impact(lines: list[str]) -> dict[str, Any]:
         }
         for line in unquantified_lines[:3]
     ]
+    low_confidence = scanned == 0
     pass_reasons = (
         [f"{quantified}/{scanned} experience bullets include measurable outcomes.", "Impact metrics are tied to delivery statements."]
         if issues == 0 and scanned > 0
-        else []
+        else (["Low-confidence quantifying analysis: no experience bullets were detected."] if scanned == 0 else [])
     )
 
     return {
@@ -2687,9 +3729,15 @@ def _analyze_quantifying_impact(lines: list[str]) -> dict[str, Any]:
             "quantified_bullets": quantified,
             "quantified_ratio": ratio,
             "excluded_numeric_tokens": excluded_numeric_tokens,
+            "domain_primary": domain_key,
+            "min_quantified_ratio": min_ratio,
+            "max_issue_cap": max_issue_cap,
+            "alternative_impact_hits": alternative_signal_hits,
+            "low_confidence": low_confidence,
         },
         "rationale": (
-            f"Quantified bullets={quantified}/{scanned}, ratio={ratio}, excluded_numeric_tokens={excluded_numeric_tokens}."
+            f"Quantified bullets={quantified}/{scanned}, ratio={ratio}, domain={domain_key}, "
+            f"min_ratio={min_ratio}, excluded_numeric_tokens={excluded_numeric_tokens}."
             if scanned
             else "Not enough experience bullets were detected for full quantification scoring."
         ),
@@ -2829,93 +3877,195 @@ _LOWERCASE_START_EXCEPTIONS = re.compile(
 )
 
 
-def _deterministic_spelling_candidates(lines: list[str]) -> list[dict[str, str]]:
-    candidates: list[dict[str, str]] = []
-    for line in lines[:120]:
-        stripped = line.strip()
-        if not stripped or len(stripped) < 4:
+def _looks_like_lowercase_clause_continuation(sentence: str, previous_sentence: str) -> bool:
+    current = _safe_str(sentence, max_len=900).strip()
+    prev = _safe_str(previous_sentence, max_len=900).strip()
+    if not current or not prev:
+        return False
+    first_non_ws = next((char for char in current if not char.isspace()), "")
+    if not first_non_ws or not first_non_ws.islower():
+        return False
+
+    # If previous sentence did not end a full sentence, lowercase start is likely
+    # a wrapped continuation (common in PDF extraction).
+    if prev.endswith((",", ";", ":", "-", "/", "+", "(", "[")):
+        return True
+    if prev.endswith((".", "!", "?")):
+        return False
+
+    tokens = _tokenize(current)
+    if len(tokens) >= 2:
+        continuation_heads = {
+            "to",
+            "for",
+            "with",
+            "by",
+            "in",
+            "on",
+            "across",
+            "through",
+            "and",
+            "or",
+            "while",
+            "where",
+        }
+        if tokens[1] in continuation_heads and (
+            tokens[0].endswith("s")
+            or tokens[0] in {"companies", "clients", "users", "teams", "systems", "services", "transactions", "orders"}
+        ):
+            return True
+    return False
+
+
+def _looks_like_wrapped_clause_artifact(sentence: str) -> bool:
+    current = _safe_str(sentence, max_len=900).strip()
+    if not current:
+        return False
+    first_non_ws = next((char for char in current if not char.isspace()), "")
+    if not first_non_ws or not first_non_ws.islower():
+        return False
+    tokens = _tokenize(current)
+    if len(tokens) < 8:
+        return False
+    if _ATC_FRAGMENT_CONTINUATION_RE.match(current.lower()):
+        return True
+    if len(tokens) >= 3 and tokens[1] == "to" and (
+        tokens[0].endswith("s") or tokens[0] in {"company", "companies", "client", "clients", "user", "users"}
+    ):
+        return True
+    return False
+
+
+def _deterministic_spelling_candidates(
+    lines: list[str],
+    *,
+    analysis_units: list[AnalysisUnit] | None = None,
+) -> list[dict[str, Any]]:
+    normalized_lines = _normalize_analysis_lines(lines[:160])
+    candidates: list[dict[str, Any]] = []
+
+    def _evidence_for(sentence_text: str, line_start: int | None, line_end: int | None) -> dict[str, Any]:
+        return {
+            "spans": [
+                {
+                    "doc_id": None,
+                    "page": None,
+                    "line_start": line_start,
+                    "line_end": line_end,
+                    "bbox": None,
+                    "text_snippet": _safe_str(sentence_text, max_len=260),
+                }
+            ],
+            "claim_ids": [],
+        }
+
+    if analysis_units:
+        sentence_units = _sentence_units_from_analysis_units(analysis_units)
+    else:
+        sentence_units = _sentence_units_from_lines(normalized_lines)
+    excluded_unit_types = {"contact", "header", "url", "section_title"}
+    previous_sentence_text = ""
+    for unit in sentence_units[:180]:
+        sentence = _safe_str(unit.get("text"), max_len=800).strip()
+        if not sentence or len(sentence) < 4:
             continue
 
-        # -- Repeated spacing (keep, but skip lines that look like extracted PDF column gaps) --
-        spacing_matches = list(re.finditer(r"\s{2,}", stripped))
-        if spacing_matches:
-            # Only flag if it's NOT a side-by-side column extraction pattern (huge gaps)
-            max_gap = max(m.end() - m.start() for m in spacing_matches)
-            if max_gap <= 6:  # small repeated spaces = real formatting issue
-                candidates.append(
-                    {
-                        "text": stripped,
-                        "reason": "Contains repeated spacing.",
-                        "suggestion": "Normalize spacing to single spaces.",
-                        "severity": "low",
-                    }
-                )
+        line_start = _safe_optional_int(unit.get("line_start"), min_value=1, max_value=20000)
+        line_end = _safe_optional_int(unit.get("line_end"), min_value=1, max_value=20000)
+        if line_end is None:
+            line_end = line_start
+        is_bullet = bool(unit.get("is_bullet"))
+        unit_type = _safe_str(unit.get("unit_type"), max_len=32).lower()
+        if unit_type in excluded_unit_types:
+            continue
+        sentence_lower = sentence.lower()
+        lexical_tokens = [token for token in _tokenize(sentence) if token not in STOPWORDS]
 
-        # -- Repeated punctuation: exclude tech terms like .NET, C#, version numbers --
-        if re.search(r"[!?.,]{2,}", stripped):
-            # Strip out known tech patterns before checking for real punctuation issues
-            cleaned_for_punct = _TECH_PUNCTUATION_PATTERNS.sub("__TECH__", stripped)
+        if "  " in sentence:
+            candidates.append(
+                {
+                    "text": sentence,
+                    "reason": "Contains repeated spacing.",
+                    "suggestion": "Normalize spacing to single spaces.",
+                    "severity": "low",
+                    "evidence": _evidence_for(sentence, line_start, line_end),
+                }
+            )
+
+        if re.search(r"[!?.,]{2,}", sentence):
+            cleaned_for_punct = _TECH_PUNCTUATION_PATTERNS.sub("__TECH__", sentence)
             if re.search(r"[!?.,]{2,}", cleaned_for_punct):
                 candidates.append(
                     {
-                        "text": stripped,
+                        "text": sentence,
                         "reason": "Contains repeated punctuation.",
                         "suggestion": "Use a single punctuation mark for sentence endings.",
                         "severity": "medium",
+                        "evidence": _evidence_for(sentence, line_start, line_end),
                     }
                 )
 
-        # -- Lowercase start: exclude tech terms, bullet continuations, PDF extraction artifacts --
-        if re.match(r"^[a-z]", stripped) and len(stripped.split()) >= 4:
-            if not _LOWERCASE_START_EXCEPTIONS.match(stripped):
-                # Skip PDF extraction artifacts — lines that look like mid-sentence continuations
-                # (start with a common word fragment after a sentence-ending period)
-                _is_continuation = bool(re.match(
-                    r"^(?:applications?|and|or|with|using|including|such as|as well as|in addition|"
-                    r"both|services|systems|tools|platforms|frameworks|technologies|databases|solutions|"
-                    r"combined|paired|along|together)\b",
-                    stripped.lower()
-                ))
-                if not _is_continuation and not stripped[0:1] in {"–", "-"} and len(stripped) >= 20:
-                    candidates.append(
-                        {
-                            "text": stripped,
-                            "reason": "Sentence starts with lowercase where capitalization is expected.",
-                            "suggestion": "Capitalize sentence start and proper nouns.",
-                            "severity": "low",
-                        }
-                    )
+        if not is_bullet and _ATC_FRAGMENT_START_RE.match(sentence_lower) and not _ATC_FRAGMENT_CONTINUATION_RE.match(sentence_lower):
+            candidates.append(
+                {
+                    "text": sentence,
+                    "reason": "Sentence fragment: missing subject.",
+                    "suggestion": "Add a clear subject (for example, 'I have completed ...') or rewrite the sentence.",
+                    "severity": "medium",
+                    "evidence": _evidence_for(sentence, line_start, line_end),
+                }
+            )
 
-        lower = stripped.lower()
+        first_non_ws = next((char for char in sentence if not char.isspace()), "")
+        if (
+            first_non_ws.isalpha()
+            and first_non_ws.islower()
+            and not is_bullet
+            and len(lexical_tokens) >= 3
+            and not _looks_like_lowercase_clause_continuation(sentence, previous_sentence_text)
+            and not _looks_like_wrapped_clause_artifact(sentence)
+            and not _LOWERCASE_START_EXCEPTIONS.match(sentence)
+            and not _ATC_FRAGMENT_CONTINUATION_RE.match(sentence_lower)
+        ):
+            candidates.append(
+                {
+                    "text": sentence,
+                    "reason": "Sentence starts with lowercase where capitalization is expected.",
+                    "suggestion": "Capitalize the first letter of the sentence.",
+                    "severity": "low",
+                    "evidence": _evidence_for(sentence, line_start, line_end),
+                }
+            )
+        previous_sentence_text = sentence
+
         for typo, correction in COMMON_TYPO_MAP.items():
-            if re.search(rf"\b{re.escape(typo)}\b", lower):
+            if re.search(rf"\b{re.escape(typo)}\b", sentence_lower):
                 candidates.append(
                     {
-                        "text": stripped,
+                        "text": sentence,
                         "reason": f"Possible misspelling detected: '{typo}'.",
                         "suggestion": f"Replace '{typo}' with '{correction}'.",
                         "severity": "high",
+                        "evidence": _evidence_for(sentence, line_start, line_end),
                     }
                 )
 
-        # -- Lowercase 'i': only flag in clear sentence contexts, not in tech patterns --
-        if re.search(r"\bi\b", stripped):
-            # Skip if 'i' appears in tech contexts (i/o, i.e., CI/CD, etc.)
-            cleaned_for_i = re.sub(r"i/o|i\.e\.|i\.e|CI/CD|UI/UX|API", "", stripped)
-            if re.search(r"(?<![/.])\bi\b(?![/.])", cleaned_for_i):
-                candidates.append(
-                    {
-                        "text": stripped,
-                        "reason": "Standalone lowercase 'i' detected.",
-                        "suggestion": "Use uppercase 'I' in English text.",
-                        "severity": "low",
-                    }
-                )
+        cleaned_for_i = re.sub(r"i/o|i\.e\.|i\.e|CI/CD|UI/UX|API", "", sentence, flags=re.IGNORECASE)
+        if re.search(r"(?<![/.])\bi\b(?![/.])", cleaned_for_i):
+            candidates.append(
+                {
+                    "text": sentence,
+                    "reason": "Standalone lowercase 'i' detected.",
+                    "suggestion": "Use uppercase 'I' in English text.",
+                    "severity": "low",
+                    "evidence": _evidence_for(sentence, line_start, line_end),
+                }
+            )
 
-    deduped: list[dict[str, str]] = []
+    deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for item in candidates:
-        key = (item["text"], item["reason"])
+        key = (_safe_str(item.get("text"), max_len=260), _safe_str(item.get("reason"), max_len=220))
         if key in seen:
             continue
         seen.add(key)
@@ -2925,8 +4075,19 @@ def _deterministic_spelling_candidates(lines: list[str]) -> list[dict[str, str]]
     return deduped
 
 
-def _analyze_spelling_grammar(*, locale: str, lines: list[str]) -> dict[str, Any]:
-    candidates = _deterministic_spelling_candidates(lines)
+def _analyze_spelling_grammar(
+    *,
+    locale: str,
+    lines: list[str],
+    analysis_units: list[AnalysisUnit] | None = None,
+) -> dict[str, Any]:
+    normalized_lines = _normalize_analysis_lines(lines)
+    sentence_units = (
+        _sentence_units_from_analysis_units(analysis_units)
+        if analysis_units
+        else _sentence_units_from_lines(normalized_lines)
+    )
+    candidates = _deterministic_spelling_candidates(normalized_lines, analysis_units=analysis_units)
     validated_issues = candidates
     validation_mode = "deterministic"
 
@@ -2948,7 +4109,7 @@ def _analyze_spelling_grammar(*, locale: str, lines: list[str]) -> dict[str, Any
                 "}\n"
                 "Keep 0-8 issues only. Remove false positives.\n\n"
                 f"Candidate issues: {candidates}\n"
-                f"Resume lines: {lines[:35]}\n"
+                f"Resume lines: {normalized_lines[:35]}\n"
             ),
             temperature=0.1,
             max_output_tokens=700,
@@ -2971,7 +4132,7 @@ def _analyze_spelling_grammar(*, locale: str, lines: list[str]) -> dict[str, Any
                 "}\n"
                 "Keep 0-8 issues only. Remove false positives.\n\n"
                 f"Candidate issues: {candidates}\n"
-                f"Resume lines: {lines[:35]}\n"
+                f"Resume lines: {normalized_lines[:35]}\n"
             ),
             temperature=0.1,
             max_output_tokens=700,
@@ -3007,11 +4168,11 @@ def _analyze_spelling_grammar(*, locale: str, lines: list[str]) -> dict[str, Any
     return {
         "issues": issues,
         "score": score,
-        "evidence": [item["text"] for item in validated_issues[:3]] if issues > 0 else lines[:2],
+        "evidence": [item["text"] for item in validated_issues[:3]] if issues > 0 else normalized_lines[:2],
         "issue_examples": validated_issues,
         "pass_reasons": pass_reasons,
         "metrics": {
-            "sentences_scanned": len([line for line in lines if len(line.split()) >= 3]),
+            "sentences_scanned": len([item for item in sentence_units if len(_tokenize(_safe_str(item.get("text"), max_len=600))) >= 3]),
             "candidates_found": len(candidates),
             "validated_issues": issues,
             "validation_mode": validation_mode,
@@ -3329,6 +4490,10 @@ def _build_ats_report(
     parsing_flags: list[str],
     credibility: dict[str, Any],
     lines: list[str],
+    analysis_units: list[AnalysisUnit] | None = None,
+    normalized_jd: NormalizedJD | None = None,
+    domain_primary: str = "other",
+    deterministic_only: bool = False,
 ) -> dict[str, Any]:
     resume = payload.resume_text
     resume_lower = resume.lower()
@@ -3343,17 +4508,105 @@ def _build_ats_report(
         resume_text=resume,
     )
     file_meta = base.get("resume_file_meta") if isinstance(base.get("resume_file_meta"), dict) else _coerce_resume_file_meta(payload.resume_file_meta)
-    parsing_penalty = _parsing_penalty(resume, layout_profile=layout_profile, layout_fit=layout_fit)
-
-    parse_rate_issues = 0 if parsing_penalty < 12 else 1 if parsing_penalty < 24 else 2
-    quantifying_analysis = _analyze_quantifying_impact(lines)
+    parsing_penalty_details = _parsing_penalty_details(
+        resume,
+        layout_profile=layout_profile,
+        layout_fit=layout_fit,
+        doc_id=None,
+    )
+    parsing_penalty = _clamp_int(parsing_penalty_details.get("penalty"), default=0, min_value=0, max_value=80)
+    parsing_penalty_reasons = parsing_penalty_details.get("reasons") if isinstance(parsing_penalty_details.get("reasons"), list) else []
+    parsing_points_per_unit = _clamp_float(
+        get_scoring_value("parsing.points_per_penalty_unit", 1.5),
+        default=1.5,
+        min_value=0.5,
+        max_value=5.0,
+    )
+    parsing_penalty_great = _clamp_int(
+        get_scoring_value("parsing.max_penalty_for_great", 5),
+        default=5,
+        min_value=0,
+        max_value=30,
+    )
+    parsing_penalty_ok = _clamp_int(
+        get_scoring_value("parsing.max_penalty_for_ok", 12),
+        default=12,
+        min_value=parsing_penalty_great,
+        max_value=40,
+    )
+    parse_rate_score = _clamp_int(
+        int(round(100 - (parsing_penalty * parsing_points_per_unit))),
+        default=90,
+        min_value=0,
+        max_value=100,
+    )
+    if parsing_penalty > parsing_penalty_great and parse_rate_score >= 90:
+        parse_rate_score = 89
+    parse_rate_issues = 0 if parsing_penalty <= parsing_penalty_great else 1 if parsing_penalty <= parsing_penalty_ok else 2
+    quantifying_analysis = _analyze_quantifying_impact(
+        lines,
+        analysis_units=analysis_units,
+        domain_primary=domain_primary,
+    )
     quantifying_issues = _clamp_int(quantifying_analysis.get("issues"), default=0, min_value=0, max_value=10)
+    domain_key = _safe_str(domain_primary, max_len=30).lower() or "other"
+    quant_penalty_defaults = {
+        "tech": 1.0,
+        "sales": 1.0,
+        "marketing": 0.65,
+        "finance": 0.85,
+        "hr": 0.75,
+        "healthcare": 0.75,
+        "general": 0.72,
+        "other": 0.8,
+    }
+    if domain_key not in quant_penalty_defaults:
+        domain_key = "other"
+    quant_penalty_multiplier = _clamp_float(
+        get_scoring_value(
+            f"calibration.quantifying.domain_penalty_multiplier.{domain_key}",
+            quant_penalty_defaults[domain_key],
+        ),
+        default=quant_penalty_defaults[domain_key],
+        min_value=0.45,
+        max_value=1.2,
+    )
+    quant_max_issue_defaults = {
+        "tech": 6,
+        "sales": 6,
+        "marketing": 4,
+        "finance": 5,
+        "hr": 3,
+        "healthcare": 3,
+        "general": 4,
+        "other": 4,
+    }
+    quant_max_issue_cap = _clamp_int(
+        get_scoring_value(
+            f"calibration.quantifying.domain_max_issue_cap.{domain_key}",
+            quant_max_issue_defaults[domain_key],
+        ),
+        default=quant_max_issue_defaults[domain_key],
+        min_value=1,
+        max_value=10,
+    )
+    if quantifying_issues > 0:
+        quantifying_issues = max(1, int(round(quantifying_issues * quant_penalty_multiplier)))
+        quantifying_issues = min(quantifying_issues, quant_max_issue_cap)
+    quantifying_metrics = quantifying_analysis.get("metrics") if isinstance(quantifying_analysis.get("metrics"), dict) else {}
+    quantifying_metrics["penalty_multiplier"] = quant_penalty_multiplier
+    quantifying_metrics["adjusted_issue_cap"] = quant_max_issue_cap
+    quantifying_analysis["metrics"] = quantifying_metrics
     repetition_analysis = _analyze_repetition(lines)
     repetition_issues = _clamp_int(repetition_analysis.get("issues"), default=0, min_value=0, max_value=10)
-    spelling_analysis = _analyze_spelling_grammar(locale=payload.locale, lines=lines)
+    spelling_analysis = (
+        _analyze_spelling_grammar_deterministic(lines, analysis_units=analysis_units)
+        if deterministic_only
+        else _analyze_spelling_grammar(locale=payload.locale, lines=lines, analysis_units=analysis_units)
+    )
     spelling_issues = _clamp_int(spelling_analysis.get("issues"), default=0, min_value=0, max_value=15)
 
-    has_summary = any(keyword in resume_lower for keyword in {"summary", "professional profile", "profile"})
+    has_summary = any(keyword in resume_lower for keyword in {"summary", "professional profile", "profile", "objective"})
     has_experience = any(keyword in resume_lower for keyword in {"experience", "employment"})
     has_skills = any(keyword in resume_lower for keyword in {"skills", "competencies", "tech stack"})
     has_education = any(keyword in resume_lower for keyword in {"education", "degree", "university", "bachelor", "master"})
@@ -3387,18 +4640,131 @@ def _build_ats_report(
     else:
         file_format_issues = 0 if not extension else 1
 
-    matched_terms = set(base["matched_terms"])
-    missing_terms = set(base["missing_terms"])
-    hard_terms = sorted({term for term in matched_terms.union(missing_terms) if term in TOOL_TERMS or term in ROLE_SIGNAL_TERMS})
+    matched_terms = set(base.get("matched_terms") or [])
+    missing_terms = set(base.get("missing_terms") or [])
+    hard_terms = [term for term in (base.get("hard_terms") or []) if _safe_str(term, max_len=80)]
+    if not hard_terms:
+        if normalized_jd is not None:
+            hard_terms = _extract_jd_hard_terms(payload.job_description_text, normalized_jd=normalized_jd)
+        else:
+            hard_terms = sorted({term for term in matched_terms.union(missing_terms)})
+    hard_terms = hard_terms[:40]
+    jd_token_count = len(_tokenize(payload.job_description_text))
+    jd_min_tokens_for_hard_skills = _clamp_int(
+        get_scoring_value("matching.jd_min_tokens_for_hard_skills", 12),
+        default=12,
+        min_value=1,
+        max_value=200,
+    )
+    hard_low_confidence = jd_token_count < jd_min_tokens_for_hard_skills
+
+    hard_total = len(hard_terms)
     hard_matched = sum(1 for term in hard_terms if term in matched_terms)
-    hard_issues = 0 if not hard_terms else _clamp_int(len(hard_terms) - hard_matched, default=0, min_value=0, max_value=8)
+    hard_display_denominator = hard_total
+    hard_issues = 0 if hard_total == 0 else _clamp_int(hard_total - hard_matched, default=0, min_value=0, max_value=8)
+    hard_domain_defaults = {
+        "tech": 1.0,
+        "sales": 0.95,
+        "marketing": 0.82,
+        "finance": 0.9,
+        "hr": 0.8,
+        "healthcare": 0.8,
+        "general": 0.84,
+        "other": 0.88,
+    }
+    hard_domain_multiplier = _clamp_float(
+        get_scoring_value(
+            f"calibration.hard_skills.domain_issue_multiplier.{domain_key}",
+            hard_domain_defaults.get(domain_key, hard_domain_defaults["other"]),
+        ),
+        default=hard_domain_defaults.get(domain_key, hard_domain_defaults["other"]),
+        min_value=0.5,
+        max_value=1.2,
+    )
+    hard_low_denominator_threshold = _clamp_int(
+        get_scoring_value("calibration.hard_skills.low_denominator_threshold", 5),
+        default=5,
+        min_value=1,
+        max_value=20,
+    )
+    hard_low_denominator_multiplier = _clamp_float(
+        get_scoring_value("calibration.hard_skills.low_denominator_issue_multiplier", 0.7),
+        default=0.7,
+        min_value=0.3,
+        max_value=1.0,
+    )
+    hard_low_confidence_score = _clamp_int(
+        get_scoring_value("matching.low_confidence_hard_skill_score", 72),
+        default=72,
+        min_value=35,
+        max_value=95,
+    )
+    hard_term_requirement_evidence: dict[str, list[dict[str, Any]]] = {}
+    if hard_low_confidence:
+        hard_terms = []
+        hard_total = 0
+        hard_matched = 0
+        hard_display_denominator = 0
+        hard_issues = 0
+        hard_score = hard_low_confidence_score
+        hard_match_evidence = []
+    else:
+        if hard_issues > 0:
+            hard_issue_units = float(hard_issues) * hard_domain_multiplier
+            if hard_total < hard_low_denominator_threshold:
+                hard_issue_units *= hard_low_denominator_multiplier
+            hard_issues = max(1, _clamp_int(int(round(hard_issue_units)), default=hard_issues, min_value=1, max_value=8))
+
+        hard_score = 100 if hard_total == 0 else max(0, min(100, int(round((hard_matched / hard_total) * 100))))
+        if 0 < hard_total < hard_low_denominator_threshold:
+            hard_min_score = _clamp_int(
+                get_scoring_value("calibration.hard_skills.small_denominator_min_score", 55),
+                default=55,
+                min_value=30,
+                max_value=85,
+            )
+            hard_score = max(hard_score, hard_min_score)
+        hard_match_evidence: list[str] = []
+        for term in sorted(list(matched_terms)):
+            for snippet in _line_snippets_for_term_with_aliases(resume, term, max_items=1):
+                hard_match_evidence.append(f"{term}: {snippet}")
+                if len(hard_match_evidence) >= 5:
+                    break
+            if len(hard_match_evidence) >= 5:
+                break
+        if normalized_jd:
+            for requirement in normalized_jd.requirements:
+                req_text_lower = requirement.text.lower()
+                for term in hard_terms:
+                    term_lower = term.lower()
+                    words = [word for word in term_lower.split() if len(word) > 1]
+                    if term_lower in req_text_lower or (words and all(word in req_text_lower for word in words)):
+                        hard_term_requirement_evidence.setdefault(term, []).append(requirement.evidence.model_dump(mode="json"))
 
     soft_terms = sorted({term for term in SOFT_SKILL_TERMS if term in jd_lower})
+    soft_total = len(soft_terms)
     soft_matched = sum(1 for term in soft_terms if term in resume_lower)
-    soft_issues = 0 if not soft_terms else _clamp_int(len(soft_terms) - soft_matched, default=0, min_value=0, max_value=6)
+    soft_issues = 0 if soft_total == 0 else _clamp_int(soft_total - soft_matched, default=0, min_value=0, max_value=6)
+    soft_score = 100 if soft_total == 0 else max(0, min(100, int(round((soft_matched / soft_total) * 100))))
 
-    action_bullets = _clamp_int(credibility.get("action_bullets"), default=0, min_value=0, max_value=120)
+    action_units: list[AnalysisUnit] = []
+    if analysis_units:
+        action_units = [
+            unit
+            for unit in analysis_units
+            if unit.unit_type == "experience_bullet"
+            and len(_tokenize(unit.text)) >= 3
+        ]
+    action_bullets = sum(
+        1
+        for unit in action_units
+        if _STRONG_ACTION_VERBS_RE.match(unit.text.lstrip("- *\u2022\t"))
+    )
+    action_units_scanned = len(action_units)
+    active_voice_low_confidence = action_units_scanned < 2
     action_issues = 0 if action_bullets >= 6 else 1 if action_bullets >= 3 else 2
+    if active_voice_low_confidence:
+        action_issues = 0
 
     word_count = len(_tokenize(resume))
     if word_count < 220 or word_count > 1200:
@@ -3435,20 +4801,70 @@ def _build_ats_report(
     personality_issues = 0 if len(personality_hits) >= 2 else 1
     personality_score = 92 if personality_issues == 0 else 64
 
-    active_voice_issues = 0 if action_bullets >= 6 else 1 if action_bullets >= 3 else 2
+    active_voice_issues = action_issues
     active_voice_score = _clamp_int(100 - (active_voice_issues * 26), default=74, min_value=30, max_value=100)
+    if active_voice_low_confidence:
+        active_voice_score = max(active_voice_score, 72)
 
     humanization = _humanization_report(resume)
     buzzword_count = _clamp_int(humanization.get("cliche_count"), default=0, min_value=0, max_value=10)
     buzzword_issues = buzzword_count
     buzzword_score = _clamp_int(100 - (buzzword_count * 12), default=84, min_value=20, max_value=100)
 
-    first_line = lines[0].lower() if lines else ""
-    title_terms = [term for term in _important_terms(payload.job_description_text, limit=12) if len(term) > 3 and term not in STOPWORDS][:5]
-    tailored_title_hit = any(term in first_line for term in title_terms)
-    tailored_title_issue = 0 if tailored_title_hit else 1
+    headline_line = _select_headline_line(lines, analysis_units=analysis_units)
+    headline_lower = headline_line.lower()
+    title_terms = _title_terms_from_jd(payload.job_description_text)
+    title_low_confidence = _jd_title_signal_low_confidence(payload.job_description_text, title_terms)
+    if title_low_confidence:
+        tailored_title_hit = True
+        tailored_title_issue = 0
+    else:
+        tailored_title_hit = any(term in headline_lower for term in title_terms)
+        tailored_title_issue = 0 if tailored_title_hit else 1
 
     header_lines = lines[:3]
+    normalized_line_map: dict[str, int] = {}
+    for idx, raw_line in enumerate(lines, start=1):
+        key = re.sub(r"\s+", " ", raw_line.strip().lower())
+        if key and key not in normalized_line_map:
+            normalized_line_map[key] = idx
+
+    def _default_issue_evidence(text_value: str) -> dict[str, Any]:
+        snippet = _safe_str(text_value, max_len=260)
+        lookup_key = re.sub(r"\s+", " ", snippet.strip().lower())
+        line_no = normalized_line_map.get(lookup_key)
+        if line_no is None and lookup_key:
+            for line_key, candidate_line in normalized_line_map.items():
+                if lookup_key in line_key or line_key in lookup_key:
+                    line_no = candidate_line
+                    break
+        return {
+            "spans": [
+                {
+                    "doc_id": None,
+                    "page": None,
+                    "line_start": line_no,
+                    "line_end": line_no,
+                    "bbox": None,
+                    "text_snippet": snippet,
+                }
+            ],
+            "claim_ids": [],
+        }
+
+    def _ensure_issue_evidence(examples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched: list[dict[str, Any]] = []
+        for item in examples:
+            enriched_item = dict(item)
+            evidence = enriched_item.get("evidence")
+            spans = evidence.get("spans") if isinstance(evidence, dict) else None
+            claim_ids = evidence.get("claim_ids") if isinstance(evidence, dict) else None
+            has_spans = isinstance(spans, list) and len(spans) > 0
+            has_claim_ids = isinstance(claim_ids, list) and len(claim_ids) > 0
+            if not has_spans and not has_claim_ids:
+                enriched_item["evidence"] = _default_issue_evidence(_safe_str(enriched_item.get("text"), max_len=260))
+            enriched.append(enriched_item)
+        return enriched
 
     def make_check(
         check_id: str,
@@ -3459,11 +4875,20 @@ def _build_ats_report(
         score: int | None = None,
         evidence: list[str] | None = None,
         rationale: str = "",
-        issue_examples: list[dict[str, str]] | None = None,
+        issue_examples: list[dict[str, Any]] | None = None,
         pass_reasons: list[str] | None = None,
         metrics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         resolved_score = score if score is not None else max(0, min(100, 100 - (issues * 22)))
+        resolved_metrics = dict(metrics or {})
+        if resolved_metrics.get("low_confidence"):
+            low_confidence_score_cap = _clamp_int(
+                get_scoring_value("confidence.low_confidence_score_cap", 79),
+                default=79,
+                min_value=0,
+                max_value=99,
+            )
+            resolved_score = min(resolved_score, low_confidence_score_cap)
         resolved_evidence = [item for item in (evidence or []) if item][:4]
         resolved_issue_examples = _safe_issue_examples(issue_examples or [], max_items=6)
         resolved_pass_reasons = _safe_str_list(pass_reasons or [], max_items=4, max_len=220)
@@ -3478,6 +4903,7 @@ def _build_ats_report(
                     "severity": "medium",
                 }
             ]
+        resolved_issue_examples = _ensure_issue_evidence(resolved_issue_examples)
         if issues <= 0 and not resolved_pass_reasons:
             resolved_pass_reasons = [
                 "No issues detected for this check based on current resume evidence.",
@@ -3496,8 +4922,29 @@ def _build_ats_report(
             "rationale": resolved_rationale,
             "issue_examples": resolved_issue_examples,
             "pass_reasons": resolved_pass_reasons,
-            "metrics": metrics or {},
+            "metrics": resolved_metrics,
         }
+
+    parse_reason_details = [reason for reason in parsing_penalty_reasons[:6] if isinstance(reason, dict)]
+    parse_reason_titles = [
+        _safe_str(reason.get("title"), max_len=120)
+        for reason in parse_reason_details
+        if _safe_str(reason.get("title"), max_len=120)
+    ]
+    parse_reason_title_summary = ", ".join(parse_reason_titles[:4])
+    default_parse_fix = layout_note or "Use one-column layout and avoid complex formatting blocks."
+    parse_rate_recommendation = _ats_parse_recommendation_from_reasons(parse_reason_details, default_parse_fix)
+    parse_rate_issue_examples = (
+        _ats_parse_issue_examples_from_reasons(
+            parse_reason_details,
+            default_fix=parse_rate_recommendation,
+        )
+        if parse_rate_issues > 0
+        else []
+    )
+    parse_rate_evidence = _ats_parse_evidence_from_reasons(parse_reason_details, max_items=4)
+    if not parse_rate_evidence:
+        parse_rate_evidence = parsing_flags[:3] or header_lines
 
     content_checks = [
         make_check(
@@ -3505,10 +4952,14 @@ def _build_ats_report(
             "ATS Parse Rate",
             parse_rate_issues,
             f"How reliably ATS can read your resume structure and fields. Detected layout: {detected_layout}.",
-            layout_note or "Use one-column layout and avoid complex formatting blocks.",
-            score=max(0, min(100, 100 - parsing_penalty)),
-            evidence=parsing_flags[:3] or header_lines,
-            rationale=f"Parsing penalty={parsing_penalty}, layout={detected_layout}.",
+            parse_rate_recommendation,
+            score=parse_rate_score,
+            evidence=parse_rate_evidence,
+            rationale=(
+                f"Parsing penalty={parsing_penalty}, parse_rate={parse_rate_score}, layout={detected_layout}, "
+                f"penalty_thresholds(great={parsing_penalty_great}, ok={parsing_penalty_ok})."
+            ),
+            issue_examples=parse_rate_issue_examples,
             pass_reasons=(
                 ["Layout and formatting patterns are within ATS-safe range."]
                 if parse_rate_issues == 0
@@ -3516,6 +4967,14 @@ def _build_ats_report(
             ),
             metrics={
                 "parsing_penalty": parsing_penalty,
+                "parsing_penalty_reasons": parse_reason_titles,
+                "parsing_penalty_reasons_detail": parse_reason_details,
+                "parsing_penalty_reason_count": len(parse_reason_titles),
+                "parsing_penalty_reason_titles": parse_reason_title_summary,
+                "points_per_penalty_unit": parsing_points_per_unit,
+                "max_penalty_for_great": parsing_penalty_great,
+                "max_penalty_for_ok": parsing_penalty_ok,
+                "parse_rate_score": parse_rate_score,
                 "layout_type": detected_layout,
                 "layout_fit": _safe_str(layout_fit.get("fit_level"), max_len=20),
             },
@@ -3739,6 +5198,18 @@ def _build_ats_report(
         ),
     ]
 
+    hard_missing_terms = sorted(list(missing_terms.intersection(set(hard_terms))))[:3]
+    hard_rationale = (
+        f"Matched hard terms={hard_matched}/{hard_display_denominator}. "
+        f"JD confidence is low ({jd_token_count} tokens < {jd_min_tokens_for_hard_skills}), hard-skill match is low-confidence."
+        if hard_low_confidence
+        else (
+            f"Matched hard terms={hard_matched}/{hard_display_denominator}. No JD hard-skill requirements detected."
+            if hard_total == 0
+            else f"Matched hard terms={hard_matched}/{hard_display_denominator}."
+        )
+    )
+
     skills_suggestion_checks = [
         make_check(
             "hard_skills",
@@ -3746,9 +5217,9 @@ def _build_ats_report(
             hard_issues,
             "Measures role-critical technical term coverage from the JD.",
             "Add missing hard skills only where you have real evidence.",
-            score=max(0, min(100, int(round((hard_matched / max(len(hard_terms), 1)) * 100)))),
-            evidence=sorted(list(matched_terms))[:5],
-            rationale=f"Matched hard terms={hard_matched}/{max(len(hard_terms), 1)}.",
+            score=hard_score,
+            evidence=hard_match_evidence if hard_total > 0 else [],
+            rationale=hard_rationale,
             issue_examples=(
                 []
                 if hard_issues == 0
@@ -3758,16 +5229,42 @@ def _build_ats_report(
                         "reason": "Required hard-skill term is missing from resume evidence.",
                         "suggestion": "Add this skill only where it is actually used in your experience bullets.",
                         "severity": "medium",
+                        "evidence": {
+                            "spans": hard_term_requirement_evidence.get(term, [])[:2],
+                            "claim_ids": [],
+                        },
                     }
-                    for term in sorted(list(missing_terms.intersection(set(hard_terms))))[:3]
+                    for term in hard_missing_terms
                 ]
             ),
             pass_reasons=(
-                [f"Matched {hard_matched} out of {max(len(hard_terms), 1)} role-critical hard skill terms."]
+                (
+                    (
+                        [
+                            "JD not provided or insufficient for hard-skill matching.",
+                            f"Low-confidence mode applied (token count {jd_token_count} < {jd_min_tokens_for_hard_skills}).",
+                        ]
+                        if hard_low_confidence
+                        else (
+                            [f"Matched {hard_matched} out of {hard_total} role-critical hard skill terms."]
+                            if hard_total > 0
+                            else ["No role-critical hard-skill terms were detected in the JD."]
+                        )
+                    )
+                )
                 if hard_issues == 0
                 else []
             ),
-            metrics={"hard_terms_total": len(hard_terms), "hard_terms_matched": hard_matched},
+            metrics={
+                "hard_terms_total": hard_total,
+                "hard_terms_matched": hard_matched,
+                "display_denominator": hard_display_denominator,
+                "domain_penalty_multiplier": hard_domain_multiplier,
+                "low_denominator_threshold": hard_low_denominator_threshold,
+                "jd_token_count": jd_token_count,
+                "jd_min_tokens_for_hard_skills": jd_min_tokens_for_hard_skills,
+                "low_confidence": hard_low_confidence,
+            },
         ),
         make_check(
             "soft_skills",
@@ -3775,9 +5272,9 @@ def _build_ats_report(
             soft_issues,
             "Measures soft-skill alignment for collaboration and communication signals.",
             "Reflect soft skills through outcomes and responsibilities, not buzzwords.",
-            score=max(0, min(100, int(round((soft_matched / max(len(soft_terms), 1)) * 100)) if soft_terms else 100)),
+            score=soft_score,
             evidence=[term for term in soft_terms if term in resume_lower][:5],
-            rationale=f"Matched soft terms={soft_matched}/{max(len(soft_terms), 1)}.",
+            rationale=f"Matched soft terms={soft_matched}/{soft_total}.",
             issue_examples=(
                 []
                 if soft_issues == 0
@@ -3793,11 +5290,15 @@ def _build_ats_report(
                 ][:3]
             ),
             pass_reasons=(
-                [f"Matched {soft_matched} out of {max(len(soft_terms), 1)} JD soft-skill signals."]
+                (
+                    [f"Matched {soft_matched} out of {soft_total} JD soft-skill signals."]
+                    if soft_total > 0
+                    else ["No JD soft-skill signals were detected for this role."]
+                )
                 if soft_issues == 0
                 else []
             ),
-            metrics={"soft_terms_total": len(soft_terms), "soft_terms_matched": soft_matched},
+            metrics={"soft_terms_total": soft_total, "soft_terms_matched": soft_matched},
         ),
     ]
 
@@ -3808,7 +5309,7 @@ def _build_ats_report(
             design_issues,
             f"Checks layout complexity ({detected_layout}) that can reduce parse reliability.",
             layout_note or "Avoid multi-column blocks, tables, and dense header/footer content.",
-            score=max(0, min(100, 100 - parsing_penalty)),
+            score=parse_rate_score,
             evidence=[
                 f"columns={display_column_count}",
                 f"tables={layout_profile.get('table_count', 0)}",
@@ -3857,27 +5358,44 @@ def _build_ats_report(
             "Checks whether bullets are written in direct active voice with strong action verbs.",
             "Rewrite passive bullets into active verb-led statements with measurable impact.",
             score=active_voice_score,
-            evidence=lines[:4],
-            rationale=f"Action-led bullet signal={action_bullets}.",
+            evidence=[unit.text for unit in action_units if _STRONG_ACTION_VERBS_RE.match(unit.text.lstrip("- *\u2022\t"))][:4],
+            rationale=(
+                f"Action-led bullet signal={action_bullets} from {action_units_scanned} scoped units."
+                if not active_voice_low_confidence
+                else f"Low-confidence active voice check: only {action_units_scanned} scoped units were available."
+            ),
             issue_examples=(
                 []
                 if active_voice_issues == 0
                 else [
                     {
-                        "text": line,
+                        "text": unit.text,
                         "reason": "Line is likely passive or does not start with a strong action verb.",
                         "suggestion": "Begin with a clear action verb and tie the action to an outcome.",
-                        "severity": "medium",
+                        "severity": "low" if active_voice_low_confidence else "medium",
+                        "evidence": {
+                            "spans": [span.model_dump(mode="json") for span in unit.evidence_spans] if unit.evidence_spans else [],
+                            "claim_ids": [],
+                        },
                     }
-                    for line in lines[:3]
-                ]
+                    for unit in action_units
+                    if not _STRONG_ACTION_VERBS_RE.match(unit.text.lstrip("- *\u2022\t"))
+                ][:3]
             ),
             pass_reasons=(
-                [f"Detected {action_bullets} action-led bullets with active wording."]
+                (
+                    ["Active voice confidence is limited because too few experience bullets were detected."]
+                    if active_voice_low_confidence
+                    else [f"Detected {action_bullets} action-led bullets with active wording."]
+                )
                 if active_voice_issues == 0
                 else []
             ),
-            metrics={"action_bullets_detected": action_bullets},
+            metrics={
+                "action_bullets_detected": action_bullets,
+                "action_units_scanned": action_units_scanned,
+                "low_confidence": active_voice_low_confidence,
+            },
         ),
         make_check(
             "buzzwords_cliches",
@@ -3938,22 +5456,40 @@ def _build_ats_report(
             "Checks whether headline/title matches role language.",
             "Align your headline with the target job title and scope.",
             score=100 if tailored_title_hit else 62,
-            evidence=[lines[0]] if lines else [],
-            rationale=f"Title terms matched={tailored_title_hit}.",
+            evidence=[headline_line] if headline_line else [],
+            rationale=(
+                "Low-confidence title alignment check: insufficient JD role-title signal."
+                if title_low_confidence
+                else f"Title terms matched={tailored_title_hit}."
+            ),
             issue_examples=(
                 []
                 if tailored_title_issue == 0
                 else [
                     {
-                        "text": lines[0] if lines else "No headline detected",
+                        "text": headline_line if headline_line else "No headline detected",
                         "reason": "Headline does not clearly align with target role terms.",
                         "suggestion": "Use a headline matching your target title and domain scope.",
                         "severity": "medium",
                     }
                 ]
             ),
-            pass_reasons=(["Headline aligns with target job-title language."] if tailored_title_issue == 0 else []),
-            metrics={"title_terms_checked": len(title_terms), "title_match": tailored_title_hit},
+            pass_reasons=(
+                (
+                    ["Title check skipped with low confidence because no clear JD role-title terms were provided."]
+                    if title_low_confidence
+                    else ["Headline aligns with target job-title language."]
+                )
+                if tailored_title_issue == 0
+                else []
+            ),
+            metrics={
+                "title_terms_checked": len(title_terms),
+                "title_match": tailored_title_hit,
+                "title_check_low_confidence": title_low_confidence,
+                "low_confidence": title_low_confidence,
+                "headline_evaluated": headline_line,
+            },
         ),
     ]
 
@@ -3980,10 +5516,146 @@ def _build_ats_report(
     total_issues = sum(item["issue_count"] for item in categories)
     parsed_content_score = next(
         (check["score"] for check in content_checks if check.get("id") == "ats_parse_rate"),
-        max(0, min(100, 100 - parsing_penalty)),
+        parse_rate_score,
     )
-    issue_impact_score = _clamp_int(100 - (total_issues * 4), default=72, min_value=0, max_value=100)
-    overall_score = int(round((parsed_content_score * 0.58) + (issue_impact_score * 0.42)))
+    issue_checks = [
+        check
+        for category_item in categories
+        for check in category_item.get("checks", [])
+        if _clamp_int(check.get("issues"), default=0, min_value=0, max_value=99) > 0
+    ]
+    points_per_issue_unit = _clamp_float(
+        get_scoring_value("calibration.issue_impact.points_per_issue_unit", 5.4),
+        default=5.4,
+        min_value=1.0,
+        max_value=8.0,
+    )
+    repetition_issue_cap_for_scoring = _clamp_int(
+        get_scoring_value("calibration.repetition.issue_cap_for_scoring", 4),
+        default=4,
+        min_value=1,
+        max_value=12,
+    )
+    default_check_weights = {
+        "repetition": 0.72,
+        "quantifying_impact": 0.85,
+        "hard_skills": 0.9,
+        "active_voice": 0.85,
+        "tailored_title": 0.7,
+    }
+    weighted_issue_units = 0.0
+    capped_issue_checks = 0
+    for check in issue_checks:
+        check_id = _safe_str(check.get("id"), max_len=80)
+        check_issues = _clamp_int(check.get("issues"), default=0, min_value=0, max_value=99)
+        default_weight = default_check_weights.get(check_id, 1.0)
+        check_weight = _clamp_float(
+            get_scoring_value(f"calibration.issue_impact.check_weights.{check_id}", default_weight),
+            default=default_weight,
+            min_value=0.3,
+            max_value=1.5,
+        )
+        default_cap = repetition_issue_cap_for_scoring if check_id == "repetition" else 99
+        check_cap = _clamp_int(
+            get_scoring_value(f"calibration.issue_impact.check_caps.{check_id}", default_cap),
+            default=default_cap,
+            min_value=1,
+            max_value=99,
+        )
+        scoring_issues = min(check_issues, check_cap)
+        if scoring_issues < check_issues:
+            capped_issue_checks += 1
+        weighted_issue_units += float(scoring_issues) * check_weight
+
+    issue_impact_score = _clamp_int(
+        int(round(100 - (weighted_issue_units * points_per_issue_unit))),
+        default=72,
+        min_value=0,
+        max_value=100,
+    )
+    issue_checks_with_evidence = 0
+    low_confidence_issue_checks = 0
+    issue_examples_total = 0
+    issue_examples_with_evidence = 0
+    severity_weights_total = 0.0
+    severity_weights_count = 0
+    confidence_weights: list[float] = []
+    for check in issue_checks:
+        examples = check.get("issue_examples")
+        if not isinstance(examples, list):
+            continue
+        issue_examples_total += len(examples)
+        metrics = check.get("metrics") if isinstance(check.get("metrics"), dict) else {}
+        if metrics.get("low_confidence"):
+            low_confidence_issue_checks += 1
+            confidence_weights.append(0.65)
+        else:
+            confidence_weights.append(1.0)
+        has_evidence = False
+        for example in examples:
+            if not isinstance(example, dict):
+                continue
+            severity = _safe_str(example.get("severity"), max_len=12).lower()
+            severity_weight = 0.7 if severity == "high" else 0.85 if severity == "medium" else 1.0
+            severity_weights_total += severity_weight
+            severity_weights_count += 1
+            evidence = example.get("evidence")
+            spans = evidence.get("spans") if isinstance(evidence, dict) else None
+            claim_ids = evidence.get("claim_ids") if isinstance(evidence, dict) else None
+            if (isinstance(spans, list) and len(spans) > 0) or (isinstance(claim_ids, list) and len(claim_ids) > 0):
+                has_evidence = True
+                issue_examples_with_evidence += 1
+        if has_evidence:
+            issue_checks_with_evidence += 1
+    if issue_impact_score == 0 and issue_checks and issue_checks_with_evidence > 0:
+        issue_impact_score = max(1, int(round((issue_checks_with_evidence / len(issue_checks)) * 4)))
+
+    evidence_ratio = (
+        (issue_examples_with_evidence / issue_examples_total)
+        if issue_examples_total
+        else ((issue_checks_with_evidence / len(issue_checks)) if issue_checks else 1.0)
+    )
+    confidence_factor = (
+        sum(confidence_weights) / len(confidence_weights)
+        if confidence_weights
+        else 1.0
+    )
+    severity_factor = (
+        severity_weights_total / severity_weights_count
+        if severity_weights_count > 0
+        else 1.0
+    )
+    cap_factor = (
+        max(0.8, 1.0 - ((capped_issue_checks / len(issue_checks)) * 0.2))
+        if issue_checks
+        else 1.0
+    )
+    issue_quality_score = _clamp_int(
+        int(round(100 * evidence_ratio * confidence_factor * severity_factor * cap_factor)),
+        default=max(issue_impact_score, 40),
+        min_value=0,
+        max_value=100,
+    )
+    if issue_quality_score == 0 and issue_examples_with_evidence > 0:
+        issue_quality_score = 1
+
+    positive_bonus = 0
+    layout_good = parse_rate_issues == 0 and design_issues == 0
+    grammar_good = spelling_issues <= 1
+    repetition_good = repetition_issues <= 1
+    if layout_good and grammar_good and repetition_good:
+        positive_bonus = _clamp_int(
+            get_scoring_value("calibration.positive_signals.layout_grammar_repetition_bonus", 6),
+            default=6,
+            min_value=0,
+            max_value=15,
+        )
+    overall_score = _clamp_int(
+        int(round((parsed_content_score * 0.58) + (issue_impact_score * 0.42) + positive_bonus)),
+        default=parsed_content_score,
+        min_value=0,
+        max_value=100,
+    )
 
     return {
         "overall_score": overall_score,
@@ -3991,6 +5663,8 @@ def _build_ats_report(
         "tier_scores": {
             "parsed_content_score": parsed_content_score,
             "issue_impact_score": issue_impact_score,
+            "issue_quality_score": issue_quality_score,
+            "issue_quality": issue_quality_score,
         },
         "categories": categories,
         "parsing_flags": parsing_flags,
@@ -3998,10 +5672,26 @@ def _build_ats_report(
         "layout_fit_for_target": layout_fit,
         "format_recommendation": layout_note,
         "skills_coverage": {
-            "hard_terms_total": len(hard_terms),
+            "hard_terms_total": hard_total,
             "hard_terms_matched": hard_matched,
-            "soft_terms_total": len(soft_terms),
+            "display_denominator": hard_display_denominator,
+            "soft_terms_total": soft_total,
             "soft_terms_matched": soft_matched,
+        },
+        "issue_quality_inputs": {
+            "issue_checks": len(issue_checks),
+            "issue_checks_with_evidence": issue_checks_with_evidence,
+            "issue_examples_total": issue_examples_total,
+            "issue_examples_with_evidence": issue_examples_with_evidence,
+            "low_confidence_issue_checks": low_confidence_issue_checks,
+            "evidence_ratio": round(evidence_ratio, 3),
+            "confidence_factor": round(confidence_factor, 3),
+            "severity_factor": round(severity_factor, 3),
+            "cap_factor": round(cap_factor, 3),
+            "weighted_issue_units": round(weighted_issue_units, 3),
+            "points_per_issue_unit": round(points_per_issue_unit, 3),
+            "capped_issue_checks": capped_issue_checks,
+            "positive_bonus": positive_bonus,
         },
     }
 
@@ -4188,6 +5878,51 @@ def _build_base_analysis(
         jd_text=jd_text,
         resume_text=resume_text,
     )
+    normalized_resume_for_terms = normalize_resume(
+        ParsedDoc(
+            doc_id=f"resume-{hashlib.sha1(resume_text.encode('utf-8', errors='ignore')).hexdigest()[:12]}",
+            source_type="txt",
+            language=None,
+            text=_normalize_resume_analysis_text(resume_text),
+            blocks=[],
+            parsing_warnings=[],
+            layout_flags={},
+        )
+    )
+    normalized_jd_for_terms = normalize_jd(
+        ParsedDoc(
+            doc_id=f"jd-{hashlib.sha1(jd_text.encode('utf-8', errors='ignore')).hexdigest()[:12]}",
+            source_type="txt",
+            language=None,
+            text=_normalize_resume_analysis_text(jd_text),
+            blocks=[],
+            parsing_warnings=[],
+            layout_flags={},
+        )
+    )
+    analysis_units_for_terms = build_analysis_units(
+        ParsedDoc(
+            doc_id=f"resume-units-{hashlib.sha1(resume_text.encode('utf-8', errors='ignore')).hexdigest()[:12]}",
+            source_type="txt",
+            language=None,
+            text=_normalize_resume_analysis_text(resume_text),
+            blocks=[],
+            parsing_warnings=[],
+            layout_flags={},
+        ),
+        normalized_resume_for_terms,
+    )
+    allow_skill_classifier_llm = (
+        (os.getenv("SKILL_CLASSIFIER_USE_LLM") or "").strip().lower() in {"1", "true", "yes", "on"}
+        and tools_llm_enabled()
+    )
+    skill_alignment_for_terms = build_skill_alignment(
+        normalized_resume=normalized_resume_for_terms,
+        normalized_jd=normalized_jd_for_terms,
+        analysis_units=analysis_units_for_terms,
+        taxonomy_provider=_taxonomy_provider(),
+        allow_llm=allow_skill_classifier_llm,
+    )
 
     # ── KEYWORD EXTRACTION (section-aware, context-aware, generic) ──
     #
@@ -4335,6 +6070,10 @@ def _build_base_analysis(
 
     missing_terms = [term for term in actionable_jd_terms if not _term_in_resume(term)][:25]
     matched_terms = [term for term in actionable_jd_terms if _term_in_resume(term)][:25]
+    if skill_alignment_for_terms.denominator > 0:
+        matched_terms = list(skill_alignment_for_terms.matched_hard_terms)[:25]
+        missing_terms = list(skill_alignment_for_terms.missing_hard_terms)[:25]
+        actionable_jd_terms = list(skill_alignment_for_terms.jd_hard_terms)[:30]
 
     # 9. Weighted overlap: known/context skills count more than generic terms
     _weight_set = _hard_skill_set | jd_context_skills
@@ -4674,6 +6413,14 @@ def _build_base_analysis(
         "generation_mode": generation_mode,
         "generation_scope": generation_scope,
         "analysis_summary": analysis_summary,
+        "skill_alignment": {
+            "denominator": skill_alignment_for_terms.denominator,
+            "jd_hard_terms": skill_alignment_for_terms.jd_hard_terms[:20],
+            "matched_hard_terms": skill_alignment_for_terms.matched_hard_terms[:20],
+            "missing_hard_terms": skill_alignment_for_terms.missing_hard_terms[:20],
+            "used_llm": skill_alignment_for_terms.used_llm,
+            "llm_fallback": skill_alignment_for_terms.llm_fallback,
+        },
         "skills_comparison": skills_comparison,
         "searchability": searchability,
         "recruiter_tips": recruiter_tips,
@@ -4933,6 +6680,1337 @@ def run_missing_keywords(payload: ToolRequest) -> ToolResponse:
     )
 
 
+def _resolve_ats_resume_path(payload: ToolRequest) -> tuple[str, bool]:
+    uploaded_path = payload.tool_inputs.get("uploaded_resume_path")
+    if isinstance(uploaded_path, str) and uploaded_path.strip():
+        return uploaded_path.strip(), False
+
+    tmp = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".txt", delete=False)
+    try:
+        tmp.write(payload.resume_text)
+        tmp.flush()
+    finally:
+        tmp.close()
+    return tmp.name, True
+
+
+def _has_inconsistent_headings(text: str) -> bool:
+    heading_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.endswith(":") or (len(stripped) <= 40 and any(ch.isalpha() for ch in stripped) and stripped.upper() == stripped):
+            heading_lines.append(stripped)
+    if len(heading_lines) < 2:
+        return False
+    uppercase = sum(1 for line in heading_lines if line.upper() == line and any(ch.isalpha() for ch in line))
+    titlecase = sum(1 for line in heading_lines if line.istitle())
+    return uppercase > 0 and titlecase > 0
+
+
+def _derive_ats_layout_flags(parsed_text: str, payload: ToolRequest) -> dict[str, Any]:
+    flags = {
+        "multi_column": False,
+        "tables": False,
+        "icons_graphics": False,
+        "heading_inconsistency": False,
+    }
+    layout_profile = payload.resume_layout_profile
+    if layout_profile is not None:
+        flags["multi_column"] = layout_profile.detected_layout in {"multi_column", "hybrid"} and layout_profile.confidence >= 0.55
+        flags["tables"] = layout_profile.table_count > 0
+        flags["icons_graphics"] = any(
+            ("icon" in signal.lower()) or ("graphic" in signal.lower())
+            for signal in layout_profile.signals
+        )
+        flags["heading_inconsistency"] = layout_profile.header_link_density >= 0.6
+        return flags
+
+    lines = [line for line in parsed_text.splitlines() if line.strip()]
+    text_signals = _text_layout_signals(parsed_text)
+    table_pipe_lines = [line for line in lines if _is_table_like_pipe_line(line)]
+    non_contact_tab_lines = [
+        line
+        for line in lines
+        if "\t" in line and not _is_contact_or_header_line(line)
+    ]
+    flags["multi_column"] = bool(text_signals.get("multi_column_text_signal"))
+    flags["tables"] = (
+        bool(text_signals.get("markdown_table_lines", 0) >= 1)
+        or len(table_pipe_lines) >= 2
+        or (len(non_contact_tab_lines) >= 3 and text_signals.get("wide_space_lines", 0) >= 4)
+    )
+    flags["icons_graphics"] = any(re.search(r"[\u2600-\u27BF\U0001F300-\U0001FAFF]", line) for line in lines)
+    flags["heading_inconsistency"] = _has_inconsistent_headings(parsed_text)
+    return flags
+
+
+def _contact_profile_from_text(text: str) -> dict[str, str]:
+    email_match = EMAIL_RE.search(text)
+    phone_match = PHONE_RE.search(text)
+    return {
+        "email": email_match.group(0) if email_match else "",
+        "phone": phone_match.group(0) if phone_match else "",
+    }
+
+
+def _severity_from_penalty(weight: float) -> Severity:
+    if weight >= 0.2:
+        return "high"
+    if weight >= 0.1:
+        return "medium"
+    return "low"
+
+
+def _first_line_evidence(doc_id: str, text: str, marker: str | None = None) -> EvidenceSpan:
+    lines = text.splitlines()
+    selected_line = ""
+    selected_idx = 1
+    if marker:
+        marker_lower = marker.lower()
+        for idx, line in enumerate(lines, start=1):
+            if marker_lower in line.lower():
+                selected_line = line.strip()
+                selected_idx = idx
+                break
+    if not selected_line and lines:
+        selected_line = lines[0].strip()
+        selected_idx = 1
+    return EvidenceSpan(
+        doc_id=doc_id,
+        page=None,
+        line_start=selected_idx if selected_line else None,
+        line_end=selected_idx if selected_line else None,
+        bbox=None,
+        text_snippet=selected_line or None,
+    )
+
+
+def _build_ats_checker_output(
+    *,
+    parsed_doc_text: str,
+    parsed_doc_id: str,
+    normalized_resume: NormalizedResume,
+    parsing_report: Any,
+    parsing_warnings: list[str],
+    additional_errors: list[str] | None = None,
+) -> tuple[ATSCheckerOutput, float]:
+    ats_penalties = {
+        "multi_column": float(get_scoring_value("penalties.ats.multi_column", 0.15)),
+        "tables": float(get_scoring_value("penalties.ats.tables", 0.10)),
+        "icons_graphics": float(get_scoring_value("penalties.ats.icons_graphics", 0.05)),
+        "missing_contact": float(get_scoring_value("penalties.ats.missing_contact", 0.20)),
+        "heading_inconsistency": float(get_scoring_value("penalties.ats.heading_inconsistency", 0.10)),
+    }
+    apply_max_ats_risk = float(get_scoring_value("decisions.apply.max_ats_risk", 0.45))
+    fix_max_ats_risk = float(get_scoring_value("decisions.fix.max_ats_risk", 0.60))
+    low_confidence_threshold = float(get_scoring_value("confidence.low_confidence_threshold", 0.55))
+    needs_user_input_threshold = float(get_scoring_value("confidence.needs_user_input_threshold", 0.45))
+
+    blocker_specs: list[tuple[str, str, str, str, bool, str | None]] = [
+        (
+            "multi_column",
+            "Multi-column formatting",
+            "Resume appears to use a multi-column/hybrid layout that can reduce ATS parsing reliability.",
+            "Use a single-column structure for sections and bullet points.",
+            bool(parsing_report.layout_flags.get("multi_column")),
+            None,
+        ),
+        (
+            "tables",
+            "Table-like structure detected",
+            "Table-like formatting can cause ATS field extraction failures.",
+            "Replace tables with plain section headings and bullet lists.",
+            bool(parsing_report.layout_flags.get("tables")),
+            "|",
+        ),
+        (
+            "icons_graphics",
+            "Icons/graphics detected",
+            "Decorative graphics or icon-heavy content can be skipped by ATS parsers.",
+            "Replace icons with plain text labels and keep content text-first.",
+            bool(parsing_report.layout_flags.get("icons_graphics")),
+            None,
+        ),
+        (
+            "missing_contact",
+            "Missing contact details",
+            "No email or phone signal was detected in normalized profile fields.",
+            "Add a plain-text email and phone number near the top of the resume.",
+            parsing_report.missing_contact,
+            None,
+        ),
+        (
+            "heading_inconsistency",
+            "Heading style inconsistency",
+            "Inconsistent heading patterns can reduce parser section mapping confidence.",
+            "Use consistent heading style for all major sections.",
+            bool(parsing_report.layout_flags.get("heading_inconsistency")),
+            None,
+        ),
+    ]
+
+    blockers: list[ATSBlocker] = []
+    risk_score = 0.0
+    for blocker_id, title, explanation, suggested_fix, triggered, marker in blocker_specs:
+        if not triggered:
+            continue
+        penalty_weight = ats_penalties.get(blocker_id, 0.0)
+        risk_score += penalty_weight
+        span = _first_line_evidence(parsed_doc_id, parsed_doc_text, marker=marker)
+        blockers.append(
+            ATSBlocker(
+                id=blocker_id,
+                title=title,
+                severity=_severity_from_penalty(penalty_weight),
+                explanation=explanation,
+                evidence=ATSBlockerEvidence(spans=[span.model_dump(mode="json")], claim_ids=[]),
+                suggested_fix=suggested_fix,
+            )
+        )
+
+    risk_score = max(0.0, min(1.0, risk_score))
+    if risk_score <= apply_max_ats_risk:
+        ats_risk_level: Literal["low", "medium", "high"] = "low"
+    elif risk_score <= fix_max_ats_risk:
+        ats_risk_level = "medium"
+    else:
+        ats_risk_level = "high"
+
+    confidence = 0.9
+    confidence_reasons = [
+        "Deterministic ATS analysis completed using parse->normalize->feature pipeline.",
+        "Scoring thresholds and penalties loaded from config/scoring.yaml.",
+    ]
+    errors: list[str] = []
+
+    if parsing_warnings:
+        confidence -= min(0.25, 0.07 * len(parsing_warnings))
+        confidence_reasons.append("Parsing warnings reduced confidence.")
+        errors.extend(f"Parsing warning: {warning}" for warning in parsing_warnings)
+    if additional_errors:
+        confidence -= min(0.25, 0.06 * len(additional_errors))
+        confidence_reasons.append("Pipeline invariants reported missing analysis evidence.")
+        errors.extend(_safe_str(item, max_len=220) for item in additional_errors if _safe_str(item, max_len=220))
+    if not parsed_doc_text.strip():
+        confidence -= 0.5
+        errors.append("Parsed document text is empty.")
+    if len(normalized_resume.claims) == 0:
+        confidence -= 0.2
+        errors.append("No bullet-like claims were extracted from the resume.")
+    if len(parsed_doc_text.strip()) < 120:
+        confidence -= 0.1
+        confidence_reasons.append("Very short resume content limits ATS confidence.")
+    if blockers:
+        confidence_reasons.append(f"{len(blockers)} ATS blocker(s) were identified.")
+    else:
+        confidence_reasons.append("No ATS blockers were triggered by configured checks.")
+
+    confidence = max(0.0, min(1.0, confidence))
+    needs_user_input = confidence < needs_user_input_threshold or bool(errors)
+    if confidence < low_confidence_threshold:
+        confidence_reasons.append("Confidence is below the configured low-confidence threshold.")
+
+    return (
+        ATSCheckerOutput(
+            ats_risk_level=ats_risk_level,
+            blockers=blockers,
+            confidence=confidence,
+            confidence_reasons=confidence_reasons,
+            needs_user_input=needs_user_input,
+            errors=errors,
+        ),
+        risk_score,
+    )
+
+
+def _build_invariant_guardrail_ats_report(errors: list[str], doc_id: str, resume_text: str) -> dict[str, Any]:
+    summary_reason = _safe_str(" | ".join(errors), max_len=260) or "Parsing invariants were not satisfied."
+    lines = [line.strip() for line in resume_text.splitlines() if line.strip()]
+    first_line = lines[0] if lines else "Resume parsing output"
+    evidence_span = {
+        "doc_id": doc_id,
+        "page": None,
+        "line_start": 1 if lines else None,
+        "line_end": 1 if lines else None,
+        "bbox": None,
+        "text_snippet": _safe_str(first_line, max_len=240) or "Parsed content unavailable",
+    }
+    parse_check = {
+        "id": "ats_parse_rate",
+        "label": "ATS Parse Rate",
+        "status": "issue",
+        "score": 0,
+        "issues": 1,
+        "description": "Validates whether parsed content is sufficient for deterministic ATS analysis.",
+        "why_it_matters": "ATS scoring reliability depends on parse and normalization quality.",
+        "how_to_fix": "Re-upload a cleaner resume file (PDF/DOCX/TXT) with consistent section headings and bullet formatting.",
+        "evidence": [summary_reason],
+        "rationale": summary_reason,
+        "issue_examples": [
+            {
+                "text": "Parse and normalization safeguards",
+                "reason": summary_reason,
+                "suggestion": "Fix parseability first, then rerun ATS analysis.",
+                "severity": "high",
+                "evidence": {"spans": [evidence_span], "claim_ids": []},
+            }
+        ],
+        "pass_reasons": [],
+        "metrics": {"invariant_error_count": len(errors), "low_confidence": True},
+    }
+    skipped_check_ids = {
+        "content": ["repetition", "spelling_grammar", "quantifying_impact"],
+        "format": ["file_format_size", "resume_length", "long_bullet_points"],
+        "skills_suggestion": ["hard_skills", "soft_skills"],
+        "resume_sections": ["contact_information", "essential_sections", "personality_showcase"],
+        "style": ["design", "email_address", "active_voice", "buzzwords_cliches", "hyperlink_in_header", "tailored_title"],
+    }
+    category_labels = {
+        "content": "Content",
+        "format": "Format",
+        "skills_suggestion": "Skills Suggestion",
+        "resume_sections": "Resume Sections",
+        "style": "Style",
+    }
+    categories: list[dict[str, Any]] = []
+    for category_id, check_ids in skipped_check_ids.items():
+        checks: list[dict[str, Any]] = []
+        if category_id == "content":
+            checks.append(parse_check)
+        for check_id in check_ids:
+            checks.append(
+                {
+                    "id": check_id,
+                    "label": check_id.replace("_", " ").title(),
+                    "status": "ok",
+                    "score": 0,
+                    "issues": 0,
+                    "description": "Deferred until parse invariants are satisfied.",
+                    "why_it_matters": "Deterministic scoring is only trustworthy on valid parse output.",
+                    "how_to_fix": "Resolve parseability errors and rerun analysis.",
+                    "evidence": [],
+                    "rationale": "Deferred due to parseability invariant failure.",
+                    "issue_examples": [],
+                    "pass_reasons": ["Deferred until parse invariants are satisfied."],
+                    "metrics": {"deferred": True, "low_confidence": True},
+                }
+            )
+        issue_count = sum(_clamp_int(check.get("issues"), default=0, min_value=0, max_value=99) for check in checks)
+        categories.append(
+            {
+                "id": category_id,
+                "label": category_labels[category_id],
+                "score": 0,
+                "issue_count": issue_count,
+                "issue_label": _issue_label(issue_count),
+                "checks": checks,
+            }
+        )
+    issue_impact_score = 96
+    issue_quality_score = 96
+    return {
+        "overall_score": 20,
+        "total_issues": 1,
+        "tier_scores": {
+            "parsed_content_score": 0,
+            "issue_impact_score": issue_impact_score,
+            "issue_quality_score": issue_quality_score,
+            "issue_quality": issue_quality_score,
+        },
+        "categories": categories,
+        "parsing_flags": [],
+        "layout_profile": {},
+        "layout_fit_for_target": {},
+        "format_recommendation": "Resolve parseability blockers before ATS scoring.",
+        "skills_coverage": {
+            "hard_terms_total": 0,
+            "hard_terms_matched": 0,
+            "display_denominator": 0,
+            "soft_terms_total": 0,
+            "soft_terms_matched": 0,
+        },
+        "issue_quality_inputs": {
+            "issue_checks": 1,
+            "issue_checks_with_evidence": 1,
+            "low_confidence_issue_checks": 1,
+            "evidence_ratio": 1.0,
+            "confidence_factor": 0.65,
+        },
+    }
+
+
+def _ats_checker_error_response(payload: ToolRequest, error_message: str) -> ToolResponse:
+    ats_output = ATSCheckerOutput(
+        ats_risk_level="high",
+        blockers=[],
+        confidence=0.0,
+        confidence_reasons=["ATS analysis failed before parsing could complete."],
+        needs_user_input=True,
+        errors=[error_message],
+    )
+    return ToolResponse(
+        recommendation="skip",
+        confidence=ats_output.confidence,
+        scores=ScoreCard(job_match=0, ats_readability=0),
+        risks=[RiskItem(type="parsing", severity="high", message=error_message)],
+        fix_plan=[],
+        generated_at=datetime.now(timezone.utc),
+        details={
+            "ats_checker": ats_output.model_dump(mode="json"),
+            "ats_report": {
+                "overall_score": 0,
+                "total_issues": 1,
+                "tier_scores": {
+                    "content": 0,
+                    "format": 0,
+                    "skills_suggestion": 0,
+                    "resume_sections": 0,
+                    "style": 0,
+                },
+                "categories": [
+                    {
+                        "id": "content",
+                        "title": "Content",
+                        "score": 0,
+                        "checks": [
+                            {
+                                "id": "ats_parse_rate",
+                                "title": "ATS Parse Rate",
+                                "description": "Fallback ATS report due to parsing failure.",
+                                "score": 0,
+                                "issues": 1,
+                                "rationale": error_message,
+                                "issue_examples": [{"text": "N/A", "reason": error_message, "suggestion": "Retry with a valid resume file."}],
+                                "pass_reasons": [],
+                                "metrics": {"fallback": True},
+                            }
+                        ],
+                    }
+                ],
+            },
+            "errors": [error_message],
+        },
+    )
+
+
+def _analyze_spelling_grammar_deterministic(
+    lines: list[str],
+    *,
+    analysis_units: list[AnalysisUnit] | None = None,
+) -> dict[str, Any]:
+    normalized_lines = _normalize_analysis_lines(lines)
+    sentence_units = (
+        _sentence_units_from_analysis_units(analysis_units)
+        if analysis_units
+        else _sentence_units_from_lines(normalized_lines)
+    )
+    issues_list = _safe_issue_examples(_deterministic_spelling_candidates(normalized_lines, analysis_units=analysis_units), max_items=8)
+    issues = _clamp_int(len(issues_list), default=0, min_value=0, max_value=15)
+    score = _clamp_int(100 - (issues * 12), default=100, min_value=0, max_value=100)
+    return {
+        "issues": issues,
+        "score": score,
+        "evidence": [item.get("text", "") for item in issues_list[:3]] if issues > 0 else normalized_lines[:2],
+        "issue_examples": issues_list,
+        "pass_reasons": (
+            ["No spelling or grammar anomalies were detected in scanned resume lines.", "Validation mode: deterministic."]
+            if issues == 0
+            else []
+        ),
+        "metrics": {
+            "sentences_scanned": len([item for item in sentence_units if len(_tokenize(_safe_str(item.get("text"), max_len=600))) >= 3]),
+            "candidates_found": len(issues_list),
+            "validated_issues": issues,
+            "validation_mode": "deterministic",
+        },
+        "rationale": f"Grammar validation mode=deterministic, candidates={len(issues_list)}, validated_issues={issues}.",
+    }
+
+
+def _layout_fit_for_target_v0(payload: ToolRequest, layout_flags: dict[str, Any]) -> dict[str, Any]:
+    target_region = (payload.candidate_profile.target_region or "Other").upper()
+    is_multi = bool(layout_flags.get("multi_column"))
+    has_tables = bool(layout_flags.get("tables"))
+    has_icons = bool(layout_flags.get("icons_graphics"))
+    friction_score = int(is_multi) + int(has_tables) + int(has_icons)
+
+    if target_region == "US" and friction_score >= 2:
+        fit_level = "poor"
+    elif friction_score >= 1:
+        fit_level = "moderate"
+    else:
+        fit_level = "good"
+
+    if fit_level == "poor":
+        recommendation = "Use a clean single-column resume without tables/icons for stronger ATS reliability."
+    elif fit_level == "moderate":
+        recommendation = "Consider reducing layout complexity to improve ATS parsing stability."
+    else:
+        recommendation = "Current layout signals are within ATS-friendly range."
+
+    return {"fit_level": fit_level, "format_recommendation": recommendation}
+
+
+def _canonical_term(term: str) -> str:
+    lowered = term.strip().lower()
+    return TERM_SYNONYMS.get(lowered, lowered)
+
+
+@lru_cache(maxsize=1)
+def _taxonomy_provider() -> TaxonomyProvider:
+    return get_default_taxonomy_provider()
+
+
+def _canonical_skill_key(term: str) -> str:
+    cleaned = term.strip().lower()
+    if not cleaned:
+        return ""
+    try:
+        normalized, canonical_skill_id = _taxonomy_provider().normalize_skill(cleaned)
+    except Exception:
+        normalized, canonical_skill_id = cleaned, None
+    if canonical_skill_id:
+        return canonical_skill_id
+    return _canonical_term(normalized or cleaned)
+
+
+def _jd_requirement_text_from_normalized(normalized_jd: NormalizedJD | None, fallback_jd_text: str) -> str:
+    if normalized_jd and normalized_jd.requirements:
+        return "\n".join(requirement.text for requirement in normalized_jd.requirements if requirement.text).strip() or fallback_jd_text
+    return _extract_jd_requirement_text(fallback_jd_text)
+
+
+def _is_requirement_noise_line(line: str) -> bool:
+    lowered = line.strip().lower()
+    if not lowered:
+        return True
+    if lowered in {"must-have", "preferred", ",", "qualifications", "requirements"}:
+        return True
+    if "http://" in lowered or "https://" in lowered or "@" in lowered:
+        return True
+    noise_markers = (
+        "position:",
+        "type:",
+        "compensation:",
+        "location:",
+        "commitment:",
+        "application process",
+        "upload resume",
+        "submit form",
+        "ai interview",
+        "resources",
+        "support",
+        "team reviews",
+        "considered for this opportunity",
+    )
+    return any(marker in lowered for marker in noise_markers)
+
+
+def _is_noun_phrase_like(term: str) -> bool:
+    words = [word for word in re.findall(r"[a-z0-9+#./-]+", term.lower()) if word and word not in STOPWORDS]
+    if not words or len(words) > 5:
+        return False
+    if any(word in _JD_HARD_STOP_TOKENS for word in words):
+        return False
+    if len(words) == 1:
+        single = words[0]
+        return (
+            single in _JD_HARD_ALLOWED_SINGLE_TOKENS
+            or single in TOOL_TERMS
+            or single in _JD_HARD_ACTION_HINTS
+        )
+    head = words[-1]
+    noun_heads = {
+        "platform",
+        "platforms",
+        "workflow",
+        "workflows",
+        "instructions",
+        "screenshots",
+        "boxes",
+        "qa",
+        "recording",
+        "annotation",
+        "linux",
+        "macos",
+        "windows",
+        "documentation",
+        "tool",
+    }
+    if head in noun_heads:
+        return True
+    return head.endswith(("tion", "ment", "ing", "ity", "ness", "ship", "tool"))
+
+
+def _is_valid_hard_skill_term(term: str) -> bool:
+    lowered = term.strip().lower()
+    if not lowered:
+        return False
+    if lowered in _JD_HARD_NOISE_TERMS:
+        return False
+    if lowered in STOPWORDS or lowered in LOW_SIGNAL_TERMS or lowered in _CONTEXT_NOISE:
+        return False
+    if lowered in SOFT_SKILL_TERMS:
+        return False
+    if _looks_numeric_or_noise(lowered):
+        return False
+    if any(soft_hint in lowered for soft_hint in _JD_SOFT_PHRASE_HINTS):
+        return False
+    words = [word for word in re.findall(r"[a-z0-9+#./-]+", lowered) if word]
+    if not words:
+        return False
+    if len(words) > 6:
+        return False
+    anchor_hit = any(word in _JD_HARD_ANCHOR_TOKENS for word in words)
+    known_hit = any(word in TOOL_TERMS or word in DOMAIN_TERMS or word in ROLE_SIGNAL_TERMS for word in words)
+    acronym_hit = bool(re.search(r"\b(?:qa|ui|ux|api|sql|seo|cms)\b", lowered))
+    if anchor_hit or known_hit or acronym_hit:
+        return True
+    return _is_noun_phrase_like(lowered)
+
+
+def _jd_requirement_lines(
+    jd_text: str,
+    *,
+    normalized_jd: NormalizedJD | None = None,
+) -> list[str]:
+    if normalized_jd and normalized_jd.requirements:
+        return [
+            requirement.text.strip()
+            for requirement in normalized_jd.requirements
+            if requirement.text and not _is_requirement_noise_line(requirement.text)
+        ]
+
+    req_text = _extract_jd_requirement_text(jd_text)
+    lines: list[str] = []
+    for raw_line in req_text.splitlines():
+        stripped = _ATC_BULLET_PREFIX_RE.sub("", raw_line.strip())
+        if not stripped or _is_requirement_noise_line(stripped):
+            continue
+        if len(_tokenize(stripped)) < 3:
+            continue
+        lines.append(stripped)
+    return lines
+
+
+def _clean_jd_requirement_fragment(text: str) -> str:
+    cleaned = _ATC_BULLET_PREFIX_RE.sub("", text.strip().lower())
+    cleaned = re.sub(
+        r"^(?:must(?:-have)?|required|requirements?|qualifications?|nice(?:\s+to\s+have)?|"
+        r"strong familiarity with|familiarity with|experience with|experience in|"
+        r"prior experience with|access to|ability to|comfortable working with|comfortable working|"
+        r"capable of|detail[- ]oriented and)\s+",
+        "",
+        cleaned,
+    )
+    cleaned = cleaned.replace("&", " and ")
+    cleaned = re.sub(r"[^a-z0-9+#./,\-;() ]", " ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" .,:;")
+    return cleaned
+
+
+def _extract_canonical_hard_terms_from_line(line: str) -> list[str]:
+    cleaned = _clean_jd_requirement_fragment(line)
+    if not cleaned:
+        return []
+    terms: list[str] = []
+    for pattern, canonical in _JD_HARD_CANONICAL_PATTERNS:
+        if re.search(pattern, cleaned, flags=re.IGNORECASE):
+            terms.append(canonical)
+    return terms
+
+
+def _split_requirement_fragments(line: str) -> list[str]:
+    cleaned = _clean_jd_requirement_fragment(line)
+    if not cleaned:
+        return []
+    split_source = re.sub(r"\b(?:and|or)\b", ",", cleaned)
+    fragments = [fragment.strip(" .,:;") for fragment in re.split(r"[,;()]", split_source) if fragment.strip()]
+    return fragments
+
+
+def _term_is_hard_skill(term: str) -> bool:
+    lowered = term.strip().lower()
+    if not lowered:
+        return False
+    if "instructions" in lowered and "staging instructions" not in lowered:
+        return False
+    canonical = _canonical_skill_key(lowered)
+    if canonical in TOOL_TERMS:
+        return True
+    words = [word for word in re.findall(r"[a-z0-9+#./-]+", canonical) if word]
+    if not words:
+        return False
+    if any(word in _JD_HARD_ACTION_HINTS for word in words):
+        return True
+    if any(word in _JD_HARD_ALLOWED_SINGLE_TOKENS for word in words):
+        return True
+    return canonical in {
+        "screen recording",
+        "annotate screenshots",
+        "bounding boxes",
+        "capture tool",
+        "staging instructions",
+        "workflow documentation",
+        "data collection",
+        "data annotation",
+    }
+
+
+def _normalize_hard_term_candidate(fragment: str) -> str | None:
+    cleaned = _clean_jd_requirement_fragment(fragment)
+    if not cleaned:
+        return None
+    canonical_hits = _extract_canonical_hard_terms_from_line(cleaned)
+    if canonical_hits:
+        return canonical_hits[0]
+    words = [
+        TERM_SYNONYMS.get(word, word)
+        for word in re.findall(r"[a-z0-9+#./-]+", cleaned)
+        if word and word not in STOPWORDS and word not in _JD_HARD_STOP_TOKENS
+    ]
+    if not words:
+        return None
+    if len(words) == 1 and words[0] not in _JD_HARD_ALLOWED_SINGLE_TOKENS and words[0] not in TOOL_TERMS:
+        return None
+    if len(words) > 6:
+        return None
+    normalized = " ".join(words).strip()
+    if not normalized:
+        return None
+    if normalized in _JD_HARD_NOISE_TERMS:
+        return None
+    if any(soft_hint in normalized for soft_hint in _JD_SOFT_PHRASE_HINTS):
+        return None
+    return normalized
+
+
+def _extract_jd_hard_terms(
+    jd_text: str,
+    *,
+    normalized_jd: NormalizedJD | None = None,
+) -> list[str]:
+    req_lines = _jd_requirement_lines(jd_text, normalized_jd=normalized_jd)
+    if not req_lines:
+        return []
+
+    candidate_terms: list[str] = []
+    for req_line in req_lines:
+        if _is_requirement_noise_line(req_line):
+            continue
+
+        for canonical in _extract_canonical_hard_terms_from_line(req_line):
+            if _is_valid_hard_skill_term(canonical):
+                candidate_terms.append(canonical)
+
+        for term in sorted(_direct_scan_known_terms(req_line)):
+            normalized_term = _normalize_hard_term_candidate(term)
+            if not normalized_term:
+                continue
+            if not _term_is_hard_skill(normalized_term):
+                continue
+            if _is_valid_hard_skill_term(normalized_term):
+                candidate_terms.append(normalized_term)
+
+        for fragment in _split_requirement_fragments(req_line):
+            normalized_fragment = _normalize_hard_term_candidate(fragment)
+            if not normalized_fragment:
+                continue
+            if not _term_is_hard_skill(normalized_fragment):
+                continue
+            if _is_valid_hard_skill_term(normalized_fragment):
+                candidate_terms.append(normalized_fragment)
+
+    if not candidate_terms:
+        req_text = "\n".join(req_lines)
+        for term in _important_terms(req_text, limit=40):
+            normalized_term = _normalize_hard_term_candidate(term)
+            if not normalized_term:
+                continue
+            if not _term_is_hard_skill(normalized_term):
+                continue
+            if _is_valid_hard_skill_term(normalized_term):
+                candidate_terms.append(normalized_term)
+
+    actionable_terms: list[str] = []
+    seen: set[str] = set()
+    for term in candidate_terms:
+        canonical_key = _canonical_skill_key(term)
+        if not canonical_key or canonical_key in seen:
+            continue
+        if not _term_is_hard_skill(term):
+            continue
+        seen.add(canonical_key)
+        actionable_terms.append(term)
+    return actionable_terms[:30]
+
+
+def _deterministic_alignment_terms(
+    resume_text: str,
+    jd_text: str,
+    *,
+    normalized_jd: NormalizedJD | None = None,
+) -> tuple[list[str], list[str], list[str]]:
+    hard_terms = _extract_jd_hard_terms(jd_text, normalized_jd=normalized_jd)
+
+    resume_terms = set(_important_terms(resume_text, limit=140))
+    resume_terms |= _direct_scan_known_terms(resume_text)
+    resume_terms |= _extract_contextual_skills(resume_text)
+    resume_terms |= _extract_uppercase_acronyms(resume_text)
+    resume_terms |= _extract_proper_noun_tools(resume_text)
+    resume_terms -= STOPWORDS
+    resume_terms -= _CONTEXT_NOISE
+    resume_canonical = {_canonical_skill_key(term) for term in resume_terms if term}
+    resume_lower = resume_text.lower()
+
+    def _term_match(term: str) -> bool:
+        canonical_key = _canonical_skill_key(term)
+        if canonical_key and canonical_key in resume_canonical:
+            return True
+        if re.search(r"\b" + re.escape(term) + r"\b", resume_lower):
+            return True
+        if " " in term:
+            words = [word for word in term.split() if len(word) >= 2 and word not in STOPWORDS]
+            if words and all(re.search(r"\b" + re.escape(word) + r"\b", resume_lower) for word in words):
+                return True
+        return False
+
+    matched_terms = [term for term in hard_terms if _term_match(term)][:30]
+    missing_terms = [term for term in hard_terms if term not in matched_terms][:30]
+    return matched_terms, missing_terms, hard_terms
+
+
+def _deterministic_hard_filter_hits(locale: str, resume_text: str, jd_text: str) -> list[str]:
+    resume_lower = resume_text.lower()
+    jd_lower = jd_text.lower()
+    hard_filter_hits: list[str] = []
+
+    visa_required = bool(re.search(r"\b(?:visa|work\s+authorization|work\s+permit|citizenship|right\s+to\s+work)\b", jd_lower))
+    visa_present = bool(re.search(r"\b(?:visa|work\s+authorization|work\s+permit|citizen(?:ship)?|authorized|right\s+to\s+work)\b", resume_lower))
+    if visa_required and not visa_present:
+        hard_filter_hits.append(_msg(locale, "hf_visa"))
+
+    degree_required = bool(re.search(r"\b(?:bachelor(?:'?s)?|master(?:'?s)?|phd|ph\.d|degree|b\.?s\.?|m\.?s\.?|mba)\b", jd_lower))
+    degree_present = bool(re.search(r"\b(?:bachelor(?:'?s)?|master(?:'?s)?|phd|ph\.d|degree|b\.?s\.?|m\.?s\.?|mba|diploma)\b", resume_lower))
+    if degree_required and not degree_present:
+        hard_filter_hits.append(_msg(locale, "hf_degree"))
+
+    clearance_required = bool(re.search(r"\b(?:security\s+clearance|clearance\s+required|top\s+secret|ts/sci)\b", jd_lower))
+    clearance_present = bool(re.search(r"\b(?:clearance|top\s+secret|ts/sci|secret)\b", resume_lower))
+    if clearance_required and not clearance_present:
+        hard_filter_hits.append(_msg(locale, "hf_clearance"))
+
+    return hard_filter_hits
+
+
+def _infer_pdf_bbox_multicolumn_signal(parsed_doc: ParsedDoc) -> dict[str, Any]:
+    if parsed_doc.source_type != "pdf" or not parsed_doc.blocks:
+        return {"pdf_bbox_multicolumn": False, "bbox_column_count": 1, "confidence": 0.0, "qualified_pages": 0}
+
+    valid_blocks: list[tuple[int, float, float, float, float]] = []
+    for block in parsed_doc.blocks:
+        if not isinstance(block.bbox, list) or len(block.bbox) != 4:
+            continue
+        try:
+            x0, y0, x1, y1 = (float(value) for value in block.bbox)
+        except Exception:
+            continue
+        if x1 <= x0 or y1 <= y0:
+            continue
+        if abs(x0) < 0.001 and abs(x1) < 0.001:
+            continue
+        page = _safe_optional_int(block.page, min_value=1, max_value=5000)
+        if page is None:
+            continue
+        valid_blocks.append((page, x0, y0, x1, y1))
+
+    if len(valid_blocks) < 8:
+        return {"pdf_bbox_multicolumn": False, "bbox_column_count": 1, "confidence": 0.0, "qualified_pages": 0}
+
+    min_x0 = min(item[1] for item in valid_blocks)
+    max_x1 = max(item[3] for item in valid_blocks)
+    page_span = max_x1 - min_x0
+    if page_span < 120:
+        return {"pdf_bbox_multicolumn": False, "bbox_column_count": 1, "confidence": 0.0, "qualified_pages": 0}
+
+    split_x = min_x0 + (page_span / 2.0)
+    margin = max(18.0, page_span * 0.08)
+    blocks_by_page: dict[int, list[tuple[float, float]]] = {}
+    for page, x0, _, x1, _ in valid_blocks:
+        blocks_by_page.setdefault(page, []).append((x0, x1))
+
+    qualified_pages = 0
+    total_left = 0
+    total_right = 0
+    left_x1_values: list[float] = []
+    right_x0_values: list[float] = []
+    for page_blocks in blocks_by_page.values():
+        left = [(x0, x1) for (x0, x1) in page_blocks if (x0 + x1) / 2.0 <= split_x - margin]
+        right = [(x0, x1) for (x0, x1) in page_blocks if (x0 + x1) / 2.0 >= split_x + margin]
+        total_left += len(left)
+        total_right += len(right)
+        if left and right:
+            qualified_pages += 1
+            left_x1_values.extend(x1 for _, x1 in left)
+            right_x0_values.extend(x0 for x0, _ in right)
+
+    if not left_x1_values or not right_x0_values:
+        return {"pdf_bbox_multicolumn": False, "bbox_column_count": 1, "confidence": 0.0, "qualified_pages": qualified_pages}
+
+    gap = min(right_x0_values) - max(left_x1_values)
+    has_two_columns = (
+        qualified_pages >= 1
+        and total_left >= 4
+        and total_right >= 4
+        and gap >= max(20.0, page_span * 0.05)
+    )
+    if not has_two_columns:
+        return {"pdf_bbox_multicolumn": False, "bbox_column_count": 1, "confidence": 0.0, "qualified_pages": qualified_pages}
+
+    confidence = 0.68
+    confidence += min(0.14, 0.05 * qualified_pages)
+    confidence += min(0.10, 0.03 * min(total_left, total_right))
+    if gap >= max(28.0, page_span * 0.08):
+        confidence += 0.05
+    confidence = min(0.95, confidence)
+
+    return {
+        "pdf_bbox_multicolumn": True,
+        "bbox_column_count": 2,
+        "confidence": round(confidence, 2),
+        "qualified_pages": qualified_pages,
+    }
+
+
+def _build_layout_profile_for_ats(payload: ToolRequest, parsed_doc: ParsedDoc) -> dict[str, Any]:
+    layout_profile = _coerce_layout_profile(payload.resume_layout_profile, parsed_doc.text)
+    layout_profile["source_type"] = parsed_doc.source_type
+    bbox_signal = _infer_pdf_bbox_multicolumn_signal(parsed_doc)
+    layout_profile["pdf_bbox_multicolumn"] = bool(bbox_signal.get("pdf_bbox_multicolumn"))
+    layout_profile["bbox_column_count"] = _clamp_int(
+        bbox_signal.get("bbox_column_count"),
+        default=1,
+        min_value=1,
+        max_value=4,
+    )
+    layout_profile["bbox_multicolumn_confidence"] = _clamp_float(
+        bbox_signal.get("confidence"),
+        default=0.0,
+        min_value=0.0,
+        max_value=1.0,
+    )
+    layout_profile["bbox_multicolumn_pages"] = _clamp_int(
+        bbox_signal.get("qualified_pages"),
+        default=0,
+        min_value=0,
+        max_value=100,
+    )
+    if bbox_signal.get("pdf_bbox_multicolumn"):
+        layout_profile["detected_layout"] = "multi_column"
+        layout_profile["column_count"] = max(
+            2,
+            _clamp_int(layout_profile.get("column_count"), default=2, min_value=1, max_value=4),
+        )
+        layout_profile["confidence"] = round(
+            max(
+                0.75,
+                _clamp_float(layout_profile.get("confidence"), default=0.0, min_value=0.0, max_value=1.0),
+                _clamp_float(bbox_signal.get("confidence"), default=0.0, min_value=0.0, max_value=1.0),
+            ),
+            2,
+        )
+        signals = set(layout_profile.get("signals") or [])
+        signals.add("pdf_bbox_multicolumn")
+        layout_profile["signals"] = sorted(signals)[:20]
+    if parsed_doc.layout_flags.get("multi_column"):
+        layout_profile["detected_layout"] = "multi_column"
+        layout_profile["column_count"] = max(2, _clamp_int(layout_profile.get("column_count"), default=2, min_value=1, max_value=4))
+    if parsed_doc.layout_flags.get("tables"):
+        layout_profile["table_count"] = max(1, _clamp_int(layout_profile.get("table_count"), default=0, min_value=0, max_value=200))
+    if parsed_doc.layout_flags.get("icons_graphics"):
+        signals = set(layout_profile.get("signals") or [])
+        signals.add("icons_graphics_detected")
+        layout_profile["signals"] = sorted(signals)
+    if parsed_doc.layout_flags.get("heading_inconsistency"):
+        layout_profile["header_link_density"] = max(
+            0.6,
+            _clamp_float(layout_profile.get("header_link_density"), default=0.0, min_value=0.0, max_value=1.0),
+        )
+    return layout_profile
+
+
+def _build_resume_file_meta_for_ats(payload: ToolRequest, parsed_doc: ParsedDoc) -> dict[str, Any]:
+    resume_file_meta = _coerce_resume_file_meta(payload.resume_file_meta)
+    extension = _safe_str(resume_file_meta.get("extension"), max_len=12).lower()
+    if not extension:
+        extension = parsed_doc.source_type
+    source_type = _safe_str(resume_file_meta.get("source_type"), max_len=20).lower()
+    if source_type == "unknown":
+        source_type = parsed_doc.source_type
+    resume_file_meta["extension"] = extension
+    resume_file_meta["source_type"] = source_type
+    if not resume_file_meta.get("filename"):
+        resume_file_meta["filename"] = f"uploaded-resume.{extension}"
+    return resume_file_meta
+
+
+def _build_parsing_flags_for_ats(locale: str, parsed_doc: ParsedDoc, layout_profile: dict[str, Any]) -> list[str]:
+    parsing_flags: list[str] = []
+    if parsed_doc.layout_flags.get("tables") or _clamp_int(layout_profile.get("table_count"), default=0, min_value=0, max_value=200) > 0:
+        parsing_flags.append(_msg(locale, "flag_table"))
+    effective_layout = _effective_detected_layout(layout_profile, parsed_doc.text)
+    if effective_layout in {"multi_column", "hybrid"}:
+        parsing_flags.append(_msg(locale, "flag_multicol"))
+    header_density = _clamp_float(layout_profile.get("header_link_density"), default=0.0, min_value=0.0, max_value=1.0)
+    if parsed_doc.layout_flags.get("heading_inconsistency") or "header" in parsed_doc.text.lower() or "footer" in parsed_doc.text.lower() or header_density >= 0.5:
+        parsing_flags.append(_msg(locale, "flag_header"))
+    return parsing_flags
+
+
+def _legacy_make_check(
+    *,
+    check_id: str,
+    label: str,
+    issues: int,
+    description: str,
+    recommendation: str,
+    score: int | None = None,
+    evidence: list[str] | None = None,
+    rationale: str = "",
+    issue_examples: list[dict[str, Any]] | None = None,
+    pass_reasons: list[str] | None = None,
+    metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved_score = score if score is not None else max(0, min(100, 100 - (issues * 22)))
+    resolved_evidence = [_safe_str(item, max_len=240) for item in (evidence or []) if _safe_str(item, max_len=240)]
+    resolved_issue_examples = _safe_issue_examples(issue_examples or [], max_items=6)
+    resolved_pass_reasons = _safe_str_list(pass_reasons or [], max_items=4, max_len=220)
+    resolved_rationale = _safe_str(rationale, max_len=260)
+
+    if issues > 0 and not resolved_issue_examples:
+        fallback_text = resolved_evidence[0] if resolved_evidence else f"{label} signal"
+        resolved_issue_examples = [
+            {
+                "text": fallback_text,
+                "reason": "Issue detected by deterministic ATS evaluation.",
+                "suggestion": recommendation,
+                "severity": "medium",
+            }
+        ]
+    if issues <= 0 and not resolved_pass_reasons:
+        resolved_pass_reasons = ["No issues detected for this check based on current resume evidence."]
+
+    return {
+        "id": check_id,
+        "label": label,
+        "status": _check_status(issues),
+        "issues": issues,
+        "issue_label": _issue_label(issues),
+        "score": resolved_score,
+        "description": description,
+        "recommendation": recommendation,
+        "evidence": resolved_evidence,
+        "rationale": resolved_rationale,
+        "issue_examples": resolved_issue_examples,
+        "pass_reasons": resolved_pass_reasons,
+        "metrics": metrics or {},
+    }
+
+
+def _legacy_check_from_blocker(
+    *,
+    check_id: str,
+    label: str,
+    description: str,
+    recommendation: str,
+    blocker: ATSBlocker | None,
+) -> dict[str, Any]:
+    if blocker is None:
+        return _legacy_make_check(
+            check_id=check_id,
+            label=label,
+            issues=0,
+            description=description,
+            recommendation=recommendation,
+            score=95,
+            rationale="No blocker detected by deterministic ATS checks.",
+            pass_reasons=["No issues detected for this check."],
+            metrics={"triggered": False},
+        )
+
+    severity_penalty = {"high": 45, "medium": 30, "low": 15}.get(blocker.severity, 25)
+    examples = []
+    for span in blocker.evidence.spans[:3]:
+        snippet = _safe_str(span.get("text_snippet"), max_len=240)
+        if not snippet:
+            snippet = blocker.title
+        examples.append(
+            {
+                "text": snippet,
+                "reason": blocker.explanation,
+                "suggestion": blocker.suggested_fix,
+                "severity": blocker.severity,
+            }
+        )
+    return _legacy_make_check(
+        check_id=check_id,
+        label=label,
+        issues=1,
+        description=description,
+        recommendation=recommendation,
+        score=max(0, 100 - severity_penalty),
+        evidence=[example["text"] for example in examples],
+        rationale=blocker.explanation,
+        issue_examples=examples,
+        metrics={"triggered": True, "blocker_id": blocker.id},
+    )
+
+
+def _legacy_category(category_id: str, label: str, checks: list[dict[str, Any]]) -> dict[str, Any]:
+    issue_count = sum(_clamp_int(check.get("issues"), default=0, min_value=0, max_value=99) for check in checks)
+    score = int(round(sum(_clamp_int(check.get("score"), default=0, min_value=0, max_value=100) for check in checks) / max(len(checks), 1)))
+    return {
+        "id": category_id,
+        "label": label,
+        "score": score,
+        "issue_count": issue_count,
+        "issue_label": _issue_label(issue_count),
+        "checks": checks,
+    }
+
+
+def _build_legacy_ats_report(
+    *,
+    payload: ToolRequest,
+    ats_output: ATSCheckerOutput,
+    ats_readability: int,
+    normalized_resume: NormalizedResume,
+    parsed_doc_text: str,
+    layout_fit: dict[str, Any],
+) -> dict[str, Any]:
+    lines = [line.strip() for line in parsed_doc_text.splitlines() if line.strip()]
+    blocker_map = {blocker.id: blocker for blocker in ats_output.blockers}
+    parse_rate_issues = 0 if ats_readability >= 88 else 1 if ats_readability >= 70 else 2
+
+    quantifying_analysis = _analyze_quantifying_impact(lines)
+    repetition_analysis = _analyze_repetition(lines)
+    spelling_analysis = _analyze_spelling_grammar_deterministic(lines)
+    humanization = _humanization_report(parsed_doc_text)
+
+    content_checks = [
+        _legacy_make_check(
+            check_id="ats_parse_rate",
+            label="ATS Parse Rate",
+            issues=parse_rate_issues,
+            description="How reliably ATS can parse core resume content.",
+            recommendation=_safe_str(layout_fit.get("format_recommendation"), max_len=220) or "Use a single-column structure for better ATS reliability.",
+            score=ats_readability,
+            evidence=[_safe_str(blocker.title, max_len=200) for blocker in ats_output.blockers][:3] or lines[:2],
+            rationale="Derived from deterministic ATS penalty weights and triggered blockers.",
+            issue_examples=[
+                {
+                    "text": _safe_str(span.get("text_snippet"), max_len=220) or blocker.title,
+                    "reason": blocker.explanation,
+                    "suggestion": blocker.suggested_fix,
+                    "severity": blocker.severity,
+                }
+                for blocker in ats_output.blockers[:3]
+                for span in (blocker.evidence.spans[:1] or [{}])
+            ],
+            pass_reasons=(["No parsing blockers detected."] if not ats_output.blockers else []),
+            metrics={
+                "blocker_count": len(ats_output.blockers),
+                "layout_fit": _safe_str(layout_fit.get("fit_level"), max_len=20),
+            },
+        ),
+        _legacy_make_check(
+            check_id="repetition",
+            label="Repetition of Words and Phrases",
+            issues=_clamp_int(repetition_analysis.get("issues"), default=0, min_value=0, max_value=10),
+            description="Detects exact and near-duplicate bullets plus repetitive bullet starters.",
+            recommendation="Vary verbs, merge duplicate bullets, and keep each bullet focused on one unique outcome.",
+            score=_clamp_int(repetition_analysis.get("score"), default=100, min_value=0, max_value=100),
+            evidence=[_safe_str(item, max_len=240) for item in repetition_analysis.get("evidence", []) if _safe_str(item, max_len=240)],
+            rationale=_safe_str(repetition_analysis.get("rationale"), max_len=260),
+            issue_examples=repetition_analysis.get("issue_examples"),
+            pass_reasons=repetition_analysis.get("pass_reasons"),
+            metrics=repetition_analysis.get("metrics"),
+        ),
+        _legacy_make_check(
+            check_id="spelling_grammar",
+            label="Spelling and Grammar",
+            issues=_clamp_int(spelling_analysis.get("issues"), default=0, min_value=0, max_value=15),
+            description="Flags likely grammar, punctuation, and typo quality issues with line-level evidence.",
+            recommendation="Fix spelling/grammar issues in flagged lines and rerun ATS analysis.",
+            score=_clamp_int(spelling_analysis.get("score"), default=100, min_value=0, max_value=100),
+            evidence=[_safe_str(item, max_len=240) for item in spelling_analysis.get("evidence", []) if _safe_str(item, max_len=240)],
+            rationale=_safe_str(spelling_analysis.get("rationale"), max_len=260),
+            issue_examples=spelling_analysis.get("issue_examples"),
+            pass_reasons=spelling_analysis.get("pass_reasons"),
+            metrics=spelling_analysis.get("metrics"),
+        ),
+        _legacy_make_check(
+            check_id="quantifying_impact",
+            label="Quantifying Impact in Experience Section with Examples",
+            issues=_clamp_int(quantifying_analysis.get("issues"), default=0, min_value=0, max_value=10),
+            description="Checks if experience bullets are backed by measurable outcomes and examples.",
+            recommendation="Add metrics (%/time/cost/volume) to key bullets with clear scope and ownership.",
+            score=_clamp_int(quantifying_analysis.get("score"), default=0, min_value=0, max_value=100),
+            evidence=[_safe_str(item, max_len=240) for item in quantifying_analysis.get("evidence", []) if _safe_str(item, max_len=240)],
+            rationale=_safe_str(quantifying_analysis.get("rationale"), max_len=260),
+            issue_examples=quantifying_analysis.get("issue_examples"),
+            pass_reasons=quantifying_analysis.get("pass_reasons"),
+            metrics=quantifying_analysis.get("metrics"),
+        ),
+    ]
+
+    format_checks = [
+        _legacy_check_from_blocker(
+            check_id="single_column_layout",
+            label="Single-column Layout",
+            description="Detects multi-column formatting risks.",
+            recommendation="Use one-column layout and avoid side-by-side columns.",
+            blocker=blocker_map.get("multi_column"),
+        ),
+        _legacy_check_from_blocker(
+            check_id="table_avoidance",
+            label="Table-like Content",
+            description="Detects table-like content that may break ATS extraction.",
+            recommendation="Replace tables with plain text section headings and bullets.",
+            blocker=blocker_map.get("tables"),
+        ),
+        _legacy_check_from_blocker(
+            check_id="icons_graphics",
+            label="Icons and Graphics Safety",
+            description="Detects decorative visuals that can confuse ATS parsers.",
+            recommendation="Use plain text labels instead of icon-only signals.",
+            blocker=blocker_map.get("icons_graphics"),
+        ),
+    ]
+
+    section_checks = [
+        _legacy_check_from_blocker(
+            check_id="contact_information",
+            label="Contact Information",
+            description="Checks if recruiter-contact essentials are present and parseable.",
+            recommendation="Add plain-text email and phone near the top section.",
+            blocker=blocker_map.get("missing_contact"),
+        ),
+        _legacy_check_from_blocker(
+            check_id="heading_consistency",
+            label="Heading Consistency",
+            description="Checks section heading consistency for parser stability.",
+            recommendation="Use consistent section heading style across all sections.",
+            blocker=blocker_map.get("heading_inconsistency"),
+        ),
+    ]
+
+    skills_checks = [
+        _legacy_make_check(
+            check_id="skills_visibility",
+            label="Skills Visibility",
+            issues=0 if normalized_resume.claims else 1,
+            description="Checks whether normalized claims are present for downstream skill inference.",
+            recommendation="Use bullet-style achievement lines so claim extraction can capture skills.",
+            score=85 if normalized_resume.claims else 55,
+            evidence=[claim.text for claim in normalized_resume.claims[:3]],
+            rationale=f"Claim extraction count={len(normalized_resume.claims)}.",
+            issue_examples=(
+                []
+                if normalized_resume.claims
+                else [
+                    {
+                        "text": "Resume content",
+                        "reason": "No bullet-like claims were extracted.",
+                        "suggestion": "Use concise achievement bullets.",
+                        "severity": "medium",
+                    }
+                ]
+            ),
+            pass_reasons=(["Claim extraction succeeded."] if normalized_resume.claims else []),
+            metrics={"claim_count": len(normalized_resume.claims)},
+        ),
+    ]
+
+    style_checks = [
+        _legacy_make_check(
+            check_id="buzzwords_cliches",
+            label="Usage of Buzzwords and Cliches",
+            issues=_clamp_int(humanization.get("cliche_count"), default=0, min_value=0, max_value=10),
+            description="Detects overused generic phrases that reduce credibility.",
+            recommendation="Replace generic claims with specific outcomes and evidence.",
+            score=_clamp_int(100 - (_clamp_int(humanization.get("cliche_count"), default=0, min_value=0, max_value=10) * 12), default=100, min_value=0, max_value=100),
+            evidence=[_safe_str(item, max_len=100) for item in humanization.get("detected_cliches", [])][:5],
+            rationale=f"Cliche phrases detected={_clamp_int(humanization.get('cliche_count'), default=0, min_value=0, max_value=10)}.",
+            issue_examples=[
+                {
+                    "text": _safe_str(item, max_len=120),
+                    "reason": "Generic cliche weakens trust and does not show concrete evidence.",
+                    "suggestion": "Replace with measurable outcome language.",
+                    "severity": "low",
+                }
+                for item in humanization.get("detected_cliches", [])[:3]
+            ],
+            pass_reasons=(["No major buzzword/cliche patterns detected."] if _clamp_int(humanization.get("cliche_count"), default=0, min_value=0, max_value=10) == 0 else []),
+            metrics={"cliche_count": _clamp_int(humanization.get("cliche_count"), default=0, min_value=0, max_value=10)},
+        ),
+        _legacy_make_check(
+            check_id="readability",
+            label="Readability Baseline",
+            issues=0 if not ats_output.errors else 1,
+            description="Baseline readability signal for ATS scanability.",
+            recommendation="Address parser warnings and simplify formatting where needed.",
+            score=90 if not ats_output.errors else 70,
+            rationale="Lowered when parsing/normalization errors are present.",
+            issue_examples=(
+                []
+                if not ats_output.errors
+                else [
+                    {
+                        "text": "Parsing pipeline",
+                        "reason": ats_output.errors[0],
+                        "suggestion": "Resolve parsing warning and rerun.",
+                        "severity": "medium",
+                    }
+                ]
+            ),
+            pass_reasons=(["No style-level parsing errors detected."] if not ats_output.errors else []),
+            metrics={"error_count": len(ats_output.errors)},
+        ),
+    ]
+
+    categories = [
+        _legacy_category("content", "Content", content_checks),
+        _legacy_category("format", "Format", format_checks),
+        _legacy_category("skills_suggestion", "Skills Suggestion", skills_checks),
+        _legacy_category("resume_sections", "Resume Sections", section_checks),
+        _legacy_category("style", "Style", style_checks),
+    ]
+
+    total_issues = sum(_clamp_int(category.get("issue_count"), default=0, min_value=0, max_value=99) for category in categories)
+    parsed_content_score = next(
+        (_clamp_int(check.get("score"), default=ats_readability, min_value=0, max_value=100) for check in content_checks if check.get("id") == "ats_parse_rate"),
+        ats_readability,
+    )
+    issue_impact_score = _clamp_int(100 - (total_issues * 4), default=72, min_value=0, max_value=100)
+    overall_score = int(round((parsed_content_score * 0.58) + (issue_impact_score * 0.42)))
+
+    return {
+        "overall_score": overall_score,
+        "total_issues": total_issues,
+        "tier_scores": {
+            "parsed_content_score": parsed_content_score,
+            "issue_impact_score": issue_impact_score,
+        },
+        "categories": categories,
+        "parsing_flags": [blocker.title for blocker in ats_output.blockers],
+        "layout_fit_for_target": layout_fit,
+        "format_recommendation": _safe_str(layout_fit.get("format_recommendation"), max_len=220),
+    }
+
+
 def run_ats_checker(
     payload: ToolRequest,
     *,
@@ -4942,96 +8020,341 @@ def run_ats_checker(
         progress_callback,
         stage="parsing_resume",
         label="Parsing your resume",
-        percent=16,
-        detail="Reading resume structure, layout profile, and extractable fields.",
+        percent=20,
+        detail="Running stable parsing facade on uploaded resume content.",
     )
-    base = _build_base_analysis(payload, progress_callback=progress_callback)
-    resume = payload.resume_text
-    lines = [line.strip() for line in resume.splitlines() if line.strip()]
-    credibility = _credibility_score(payload.resume_text, payload.job_description_text)
-    layout_profile = base["layout_profile"]
-    layout_fit = base["layout_fit_for_target"]
-    effective_layout = _effective_detected_layout(layout_profile, resume)
-    strong_layout = _has_strong_layout_evidence(layout_profile)
-    layout_confidence = _clamp_float(layout_profile.get("confidence"), default=0.0, min_value=0.0, max_value=1.0)
-    text_signals = _text_layout_signals(resume)
-    table_count = _clamp_int(layout_profile.get("table_count"), default=0, min_value=0, max_value=200)
 
-    parsing_flags: list[str] = []
-    if text_signals["probable_table"] or table_count > 0:
-        parsing_flags.append(_msg(payload.locale, "flag_table"))
-    if (
-        (
-            effective_layout == "multi_column"
-            and (strong_layout or layout_confidence >= 0.72)
+    resume_path = ""
+    should_cleanup = False
+    try:
+        resume_path, should_cleanup = _resolve_ats_resume_path(payload)
+        parsed_doc = parse_document(resume_path)
+    except Exception as exc:
+        if should_cleanup and resume_path and os.path.exists(resume_path):
+            try:
+                os.unlink(resume_path)
+            except OSError:
+                pass
+        return _ats_checker_error_response(payload, f"Unable to parse resume document: {exc}")
+    finally:
+        if should_cleanup and resume_path and os.path.exists(resume_path):
+            try:
+                os.unlink(resume_path)
+            except OSError:
+                pass
+
+    if not parsed_doc.text.strip() and payload.resume_text.strip():
+        parsed_doc = parsed_doc.model_copy(
+            update={
+                "text": payload.resume_text,
+                "parsing_warnings": [
+                    *parsed_doc.parsing_warnings,
+                    "Primary parser returned empty text; used provided resume_text fallback.",
+                ],
+            }
         )
-        or (
-            effective_layout == "hybrid"
-            and (strong_layout or layout_confidence >= 0.62)
+
+    normalized_text = _normalize_resume_analysis_text(parsed_doc.text)
+    if normalized_text and normalized_text != parsed_doc.text:
+        parsed_doc = parsed_doc.model_copy(update={"text": normalized_text})
+
+    parsed_doc.layout_flags = _derive_ats_layout_flags(parsed_doc.text, payload)
+    normalized_resume = normalize_resume(parsed_doc)
+    normalized_contact = _contact_profile_from_text(parsed_doc.text)
+    normalized_resume = normalized_resume.model_copy(update={"profile": normalized_contact})
+    normalized_jd = normalize_jd(
+        ParsedDoc(
+            doc_id=f"jd-{hashlib.sha1(payload.job_description_text.encode('utf-8', errors='ignore')).hexdigest()[:12]}",
+            source_type="txt",
+            language=None,
+            text=_normalize_resume_analysis_text(payload.job_description_text),
+            blocks=[],
+            parsing_warnings=[],
+            layout_flags={},
         )
-        or (text_signals["wide_space_lines"] >= 12 and text_signals["tab_line_count"] >= 4)
-    ):
-        parsing_flags.append(_msg(payload.locale, "flag_multicol"))
-    if (
-        "header" in resume.lower()
-        or "footer" in resume.lower()
-        or _clamp_float(layout_profile.get("header_link_density"), default=0.0, min_value=0.0, max_value=1.0) >= 0.5
-    ):
-        parsing_flags.append(_msg(payload.locale, "flag_header"))
+    )
+    analysis_units = build_analysis_units(parsed_doc, normalized_resume)
+    analysis_units_summary = summarize_analysis_units(analysis_units)
+    resume_domain = classify_domain_from_resume(normalized_resume, analysis_units=analysis_units)
+    jd_domain = classify_domain_from_jd(normalized_jd)
+    selected_domain = jd_domain if jd_domain.confidence >= resume_domain.confidence else resume_domain
+    domain_primary = selected_domain.domain_primary
+    domain_secondary = selected_domain.domain_secondary
+    domain_confidence = max(jd_domain.confidence, resume_domain.confidence)
+    domain_for_expectations = "general" if selected_domain.using_general_expectations else domain_primary
+
+    source_type = parsed_doc.source_type
+
+    min_parsed_chars_pdf = _clamp_int(get_scoring_value("confidence.min_parsed_chars_pdf", 120), default=120, min_value=40, max_value=5000)
+    min_parsed_chars_docx = _clamp_int(get_scoring_value("confidence.min_parsed_chars_docx", 100), default=100, min_value=40, max_value=5000)
+    min_parsed_chars_txt = _clamp_int(get_scoring_value("confidence.min_parsed_chars_txt", 40), default=40, min_value=20, max_value=5000)
+    min_claim_source_words = _clamp_int(get_scoring_value("confidence.min_claim_source_words", 70), default=70, min_value=20, max_value=5000)
+    min_chars_by_source = {
+        "pdf": min_parsed_chars_pdf,
+        "docx": min_parsed_chars_docx,
+        "txt": min_parsed_chars_txt,
+    }
+    min_required_chars = min_chars_by_source.get(source_type, min_parsed_chars_txt)
+    pipeline_errors: list[str] = []
+    if len(parsed_doc.text.strip()) < min_required_chars:
+        pipeline_errors.append(
+            f"Insufficient parsed text for ATS checks ({len(parsed_doc.text.strip())} chars, requires >= {min_required_chars} for {source_type})."
+        )
+    if len(normalized_resume.claims) == 0 and len(_tokenize(parsed_doc.text)) >= min_claim_source_words:
+        pipeline_errors.append(
+            "Claim extraction produced 0 claims on substantial resume text; provide clearer bullet formatting or verify parser output."
+        )
+    meaningful_units = [
+        unit
+        for unit in analysis_units
+        if unit.unit_type in {"experience_bullet", "objective", "other", "skills", "education"}
+        and len(_tokenize(unit.text)) >= 4
+    ]
+    if len(meaningful_units) == 0 and len(_tokenize(parsed_doc.text)) >= min_claim_source_words:
+        pipeline_errors.append(
+            "Analysis-unit stitching produced no meaningful content units; verify PDF extraction order or resume structure."
+        )
+    experience_units = [unit for unit in analysis_units if unit.unit_type == "experience_bullet"]
+
+    _emit_progress(
+        progress_callback,
+        stage="analyzing_experience",
+        label="Analyzing your experience",
+        percent=42,
+        detail="Normalize stage: preparing evidence lines and validating extracted claims.",
+    )
+    _emit_progress(
+        progress_callback,
+        stage="extracting_skills",
+        label="Extracting your skills",
+        percent=72,
+        detail="ATS checks stage: building deterministic content, format, and skills checks.",
+    )
+
+    parsing_report = build_parsing_report(parsed_doc, profile=normalized_resume.profile)
+    ats_output, risk_score = _build_ats_checker_output(
+        parsed_doc_text=parsed_doc.text,
+        parsed_doc_id=parsed_doc.doc_id,
+        normalized_resume=normalized_resume,
+        parsing_report=parsing_report,
+        parsing_warnings=parsed_doc.parsing_warnings,
+        additional_errors=pipeline_errors,
+    )
+
+    effective_resume_text = parsed_doc.text
+    lines = [line.strip() for line in effective_resume_text.splitlines() if line.strip()]
+    layout_profile = _build_layout_profile_for_ats(payload, parsed_doc)
+    layout_fit = _layout_fit_for_target(
+        layout_profile=layout_profile,
+        target_region=payload.candidate_profile.target_region,
+        jd_text=payload.job_description_text,
+        resume_text=effective_resume_text,
+    )
+    resume_file_meta = _build_resume_file_meta_for_ats(payload, parsed_doc)
+    parsing_flags = _build_parsing_flags_for_ats(payload.locale, parsed_doc, layout_profile)
+    skill_alignment = build_skill_alignment(
+        normalized_resume=normalized_resume,
+        normalized_jd=normalized_jd,
+        analysis_units=analysis_units,
+        taxonomy_provider=_taxonomy_provider(),
+        allow_llm=False,  # ATS checker remains deterministic in Step-1.
+    )
+    matched_terms = list(skill_alignment.matched_hard_terms)
+    missing_terms = list(skill_alignment.missing_hard_terms)
+    hard_terms = list(skill_alignment.jd_hard_terms)
+    if not hard_terms:
+        matched_terms, missing_terms, hard_terms = _deterministic_alignment_terms(
+            effective_resume_text,
+            payload.job_description_text,
+            normalized_jd=normalized_jd,
+        )
+    hard_filter_hits = _deterministic_hard_filter_hits(payload.locale, effective_resume_text, payload.job_description_text)
+    credibility = _credibility_score(effective_resume_text, payload.job_description_text)
+    invariant_failure = len(pipeline_errors) > 0
+    if invariant_failure:
+        ats_report = _build_invariant_guardrail_ats_report(
+            pipeline_errors,
+            parsed_doc.doc_id,
+            effective_resume_text,
+        )
+    else:
+        ats_report = _build_ats_report(
+            payload=payload.model_copy(update={"resume_text": effective_resume_text}),
+            base={
+                "layout_profile": layout_profile,
+                "layout_fit_for_target": layout_fit,
+                "resume_file_meta": resume_file_meta,
+                "matched_terms": matched_terms,
+                "missing_terms": missing_terms,
+                "hard_terms": hard_terms,
+                "hard_filter_hits": hard_filter_hits,
+            },
+            parsing_flags=parsing_flags,
+            credibility=credibility,
+            lines=lines,
+            analysis_units=analysis_units,
+            normalized_jd=normalized_jd,
+            domain_primary=domain_for_expectations,
+            deterministic_only=True,
+        )
+
+    quantifying_low_confidence = False
+    if isinstance(ats_report, dict):
+        for category in ats_report.get("categories") or []:
+            checks = category.get("checks") if isinstance(category, dict) else None
+            if not isinstance(checks, list):
+                continue
+            for check in checks:
+                if not isinstance(check, dict) or check.get("id") != "quantifying_impact":
+                    continue
+                metrics = check.get("metrics") if isinstance(check.get("metrics"), dict) else {}
+                if bool(metrics.get("low_confidence")):
+                    quantifying_low_confidence = True
+                    break
+            if quantifying_low_confidence:
+                break
+    if quantifying_low_confidence:
+        low_confidence_error = (
+            "Quantifying impact is low-confidence because no experience bullets were detected."
+        )
+        updated_errors = list(ats_output.errors)
+        if low_confidence_error not in updated_errors:
+            updated_errors.append(low_confidence_error)
+        updated_reasons = list(ats_output.confidence_reasons)
+        updated_reasons.append("No experience bullets were available for quantifying-impact scoring.")
+        ats_output = ats_output.model_copy(
+            update={
+                "needs_user_input": True,
+                "errors": updated_errors,
+                "confidence": max(0.0, min(1.0, ats_output.confidence - 0.08)),
+                "confidence_reasons": updated_reasons,
+            }
+        )
+
     _emit_progress(
         progress_callback,
         stage="generating_recommendations",
         label="Generating recommendations",
-        percent=90,
-        detail="Building ATS report checks, issue evidence, and fix guidance.",
-    )
-    ats_report = _build_ats_report(
-        payload=payload,
-        base=base,
-        parsing_flags=parsing_flags,
-        credibility=credibility,
-        lines=lines,
+        percent=86,
+        detail="Assemble report stage: scoring risk, confidence, and recommended fixes.",
     )
 
-    details = {
-        "extraction_preview": {
-            "name": lines[0] if lines else "",
-            "email": EMAIL_RE.search(resume).group(0) if EMAIL_RE.search(resume) else "",
-            "phone": PHONE_RE.search(resume).group(0) if PHONE_RE.search(resume) else "",
-            "top_skills": _important_terms(resume, limit=12),
-        },
-        "ats_report": ats_report,
-        "parsing_flags": parsing_flags,
-        "matched_term_evidence": base["matched_term_evidence"],
-        "missing_term_context": base["missing_term_context"],
-        "hard_filter_evidence": base["hard_filter_evidence"],
-        "layout_analysis": layout_profile,
-        "layout_fit_for_target": layout_fit,
-        "format_recommendation": base["format_recommendation"],
-        "resume_file_meta": base["resume_file_meta"],
-        "resume_credibility_score": credibility,
-        "generation_mode": base["generation_mode"],
-        "generation_scope": base["generation_scope"],
-        "analysis_summary": base["analysis_summary"],
-        "skills_comparison": base["skills_comparison"],
-        "searchability": base["searchability"],
-        "recruiter_tips": base["recruiter_tips"],
-    }
-    response = ToolResponse(
-        recommendation=base["recommendation"],
-        confidence=base["confidence"],
-        scores=base["scores"],
-        risks=base["risks"],
-        fix_plan=base["fix_plan"],
-        generated_at=datetime.now(timezone.utc),
-        details=details,
+    tier_scores = ats_report.get("tier_scores") if isinstance(ats_report, dict) else {}
+    ats_readability = _clamp_int(
+        tier_scores.get("parsed_content_score") if isinstance(tier_scores, dict) else None,
+        default=int(round((1.0 - risk_score) * 100)),
+        min_value=0,
+        max_value=100,
     )
+    overall_score = _clamp_int(
+        ats_report.get("overall_score") if isinstance(ats_report, dict) else None,
+        default=ats_readability,
+        min_value=0,
+        max_value=100,
+    )
+    report_risk_score = max(0.0, min(1.0, 1.0 - (overall_score / 100.0)))
+    effective_risk_score = max(risk_score, report_risk_score)
+    apply_min_confidence = float(get_scoring_value("decisions.apply.min_confidence", 0.60))
+    needs_user_input_threshold = float(get_scoring_value("confidence.needs_user_input_threshold", 0.45))
+    apply_max_ats_risk = float(get_scoring_value("decisions.apply.max_ats_risk", 0.45))
+
+    if not ats_output.needs_user_input and effective_risk_score <= apply_max_ats_risk and ats_output.confidence >= apply_min_confidence:
+        recommendation: Recommendation = "apply"
+    elif ats_output.confidence < needs_user_input_threshold:
+        recommendation = "skip"
+    else:
+        recommendation = "fix"
+
+    risks: list[RiskItem] = [
+        RiskItem(
+            type="parsing",
+            severity=blocker.severity,
+            message=f"{blocker.title}: {blocker.explanation}",
+        )
+        for blocker in ats_output.blockers
+    ]
+    fix_plan: list[FixPlanItem] = []
+    for blocker in ats_output.blockers:
+        penalty_weight = float(get_scoring_value(f"penalties.ats.{blocker.id}", 0.1))
+        effort_minutes = 35 if blocker.severity == "high" else 20 if blocker.severity == "medium" else 10
+        fix_plan.append(
+            FixPlanItem(
+                id=f"fix_{blocker.id}",
+                title=blocker.title,
+                impact_score=_clamp_int(int(round(penalty_weight * 100)), default=10, min_value=1, max_value=100),
+                effort_minutes=effort_minutes,
+                reason=blocker.suggested_fix,
+            )
+        )
+
+    response = ToolResponse(
+        recommendation=recommendation,
+        confidence=ats_output.confidence,
+        scores=ScoreCard(job_match=ats_readability, ats_readability=ats_readability),
+        risks=risks,
+        fix_plan=fix_plan,
+        generated_at=datetime.now(timezone.utc),
+        details={
+            "ats_checker": ats_output.model_dump(mode="json"),
+            "ats_report": ats_report,
+            "parsing_report": parsing_report.model_dump(mode="json"),
+            "parsing_flags": parsing_flags,
+            "layout_analysis": layout_profile,
+            "layout_fit_for_target": layout_fit,
+            "format_recommendation": _safe_str(layout_fit.get("format_recommendation"), max_len=220),
+            "parsed_doc": {
+                "doc_id": parsed_doc.doc_id,
+                "source_type": parsed_doc.source_type,
+                "text_length": len(parsed_doc.text),
+                "blocks_count": len(parsed_doc.blocks),
+                "parsing_warnings": parsed_doc.parsing_warnings,
+                "layout_flags": parsed_doc.layout_flags,
+            },
+            "normalized_resume": {
+                "source_language": normalized_resume.source_language,
+                "claim_count": len(normalized_resume.claims),
+                "profile": normalized_resume.profile,
+            },
+            "domain_classification": {
+                "domain_primary": domain_primary,
+                "domain_secondary": domain_secondary,
+                "confidence": round(domain_confidence, 3),
+                "using_general_expectations": bool(selected_domain.using_general_expectations),
+                "expectation_domain": domain_for_expectations,
+                "evidence_units": selected_domain.evidence_units,
+                "signals": {
+                    "resume": resume_domain.model_dump(mode="json"),
+                    "jd": jd_domain.model_dump(mode="json"),
+                },
+            },
+            "analysis_units_summary": analysis_units_summary,
+            "skill_pipeline": {
+                "jd_hard_terms": hard_terms[:20],
+                "matched_hard_terms": matched_terms[:20],
+                "missing_hard_terms": missing_terms[:20],
+                "denominator": len(hard_terms),
+                "used_llm": bool(getattr(skill_alignment, "used_llm", False)),
+                "llm_fallback": bool(getattr(skill_alignment, "llm_fallback", False)),
+            },
+            "resume_file_meta": resume_file_meta,
+            "pipeline_invariants": {
+                "source_type": source_type,
+                "min_required_chars": min_required_chars,
+                "parsed_chars": len(parsed_doc.text.strip()),
+                "min_claim_source_words": min_claim_source_words,
+                "meaningful_units": len(meaningful_units),
+                "experience_bullets": len(experience_units),
+            },
+            "errors": ats_output.errors,
+        },
+    )
+
     _emit_progress(
         progress_callback,
         stage="completed",
         label="Analysis complete",
         percent=100,
-        detail="ATS report is ready.",
+        detail="ATS checker output is ready.",
     )
     return response
 
