@@ -208,25 +208,6 @@ def build_analysis_units(parsed_doc: ParsedDoc, normalized_resume: NormalizedRes
 
     flush_pending()
 
-    # Fallback so ATS checks still get evidence lines even for dense parser output.
-    if not any(unit.unit_type == "experience_bullet" for unit in units):
-        for claim in (normalized_resume.claims if normalized_resume else []):
-            if not claim.text.strip():
-                continue
-            start = claim.evidence.line_start or 1
-            end = claim.evidence.line_end or start
-            units.append(
-                _make_unit(
-                    idx=idx,
-                    unit_type="experience_bullet",
-                    text=claim.text,
-                    line_start=start,
-                    line_end=end,
-                    doc_id=parsed_doc.doc_id,
-                )
-            )
-            idx += 1
-
     return units
 
 
