@@ -2615,6 +2615,12 @@ IMPACT_VERB_HINTS = {
     "boosted",
     "decreased",
     "delivered",
+    "developed",
+    "built",
+    "implemented",
+    "engineered",
+    "managed",
+    "launched",
 }
 
 COMMON_TYPO_MAP = {
@@ -3222,22 +3228,50 @@ def _sentence_units_from_lines(lines: list[str]) -> list[dict[str, Any]]:
 
 
 def _sentence_units_from_analysis_units(analysis_units: list[AnalysisUnit]) -> list[dict[str, Any]]:
-    sentence_units: list[dict[str, Any]] = []
+    merged_units: list[dict[str, Any]] = []
+    mergeable_types = {"objective", "other", "skills", "education", "experience_bullet"}
     for unit in analysis_units:
-        unit_text = _safe_str(unit.text, max_len=1200)
+        unit_text = _safe_str(unit.text, max_len=1200).strip()
         if not unit_text:
             continue
-        parts = [part.strip() for part in _ATC_SENTENCE_SPLIT_RE.split(unit_text) if part.strip()]
+        line_start = unit.line_start
+        line_end = unit.line_end
+        unit_type = unit.unit_type
+        if (
+            merged_units
+            and unit_type in mergeable_types
+            and merged_units[-1]["unit_type"] in mergeable_types
+            and line_start is not None
+            and merged_units[-1]["line_end"] is not None
+            and line_start <= merged_units[-1]["line_end"] + 1
+            and unit_text[:1].islower()
+            and not _safe_str(merged_units[-1]["text"], max_len=1200).rstrip().endswith((".", "!", "?"))
+        ):
+            merged_units[-1]["text"] = f"{merged_units[-1]['text']} {unit_text}".strip()
+            merged_units[-1]["line_end"] = line_end if line_end is not None else merged_units[-1]["line_end"]
+            continue
+        merged_units.append(
+            {
+                "text": unit_text,
+                "line_start": line_start,
+                "line_end": line_end,
+                "unit_type": unit_type,
+            }
+        )
+
+    sentence_units: list[dict[str, Any]] = []
+    for unit in merged_units:
+        parts = [part.strip() for part in _ATC_SENTENCE_SPLIT_RE.split(_safe_str(unit.get("text"), max_len=1200)) if part.strip()]
         if not parts:
-            parts = [unit_text]
+            parts = [_safe_str(unit.get("text"), max_len=1200)]
         for part in parts:
             sentence_units.append(
                 {
                     "text": part,
-                    "line_start": unit.line_start,
-                    "line_end": unit.line_end,
-                    "is_bullet": unit.unit_type == "experience_bullet",
-                    "unit_type": unit.unit_type,
+                    "line_start": unit.get("line_start"),
+                    "line_end": unit.get("line_end"),
+                    "is_bullet": unit.get("unit_type") == "experience_bullet",
+                    "unit_type": unit.get("unit_type"),
                 }
             )
     return sentence_units
@@ -3598,9 +3632,15 @@ def _line_has_impact_quantification(line: str) -> bool:
             return True
     if re.search(
         r"\b\d+(?:[\.,]\d+)?\+?\s*(?:users?|requests?|transactions?|incidents?|tickets?|deployments?|pipelines?|"
-        r"companies?|clients?|customers?|accounts?|orders?|sites?|schools?|branches?|stores?|teams?|markets?|regions?)\b",
+        r"companies?|clients?|customers?|accounts?|orders?|sites?|schools?|branches?|stores?|teams?|markets?|regions?|"
+        r"tools?|modules?|features?|projects?|apps?|applications?|components?|articles?|reports?)\b",
         lower,
     ):
+        return True
+    if re.search(
+        r"\b(?:over|more than|at least|up to)\s+\d+(?:[\.,]\d+)?\+?\b",
+        lower,
+    ) and any(verb in lower for verb in IMPACT_VERB_HINTS):
         return True
     return False
 
@@ -3611,15 +3651,20 @@ def _analyze_quantifying_impact(
     analysis_units: list[AnalysisUnit] | None = None,
     domain_primary: str = "other",
 ) -> dict[str, Any]:
-    candidates = (
-        [
+    if analysis_units:
+        unit_candidates = [
             unit.text.strip()
-            for unit in (analysis_units or [])
+            for unit in analysis_units
             if unit.unit_type == "experience_bullet" and len(_tokenize(unit.text)) >= 3
         ][:120]
-        if analysis_units
-        else _extract_candidate_experience_lines(lines, analysis_units=None)
-    )
+        if unit_candidates:
+            candidates = unit_candidates
+        else:
+            # Fallback for parser layouts where bullets exist but unit typing failed.
+            raw_has_bullets = any(_ATC_BULLET_PREFIX_RE.match(_safe_str(line, max_len=400).strip()) for line in lines)
+            candidates = _extract_candidate_experience_lines(lines, analysis_units=None) if raw_has_bullets else []
+    else:
+        candidates = _extract_candidate_experience_lines(lines, analysis_units=None)
     quantified_lines: list[str] = []
     unquantified_lines: list[str] = []
     # Count non-impact numeric noise across the full resume (dates, phones, tenure-only numbers),
@@ -3929,6 +3974,14 @@ def _looks_like_wrapped_clause_artifact(sentence: str) -> bool:
         return False
     if _ATC_FRAGMENT_CONTINUATION_RE.match(current.lower()):
         return True
+    tech_tokens = {"angular", "react", "vue", "next", "node", "docker", "kubernetes", "net", "c#", "sql", "sap"}
+    tokens = _tokenize(current)
+    if "(" in current and ")" in current and any(token in tech_tokens for token in tokens):
+        return True
+    if "," in current and len(tokens) <= 14:
+        verb_like = {"built", "led", "managed", "designed", "developed", "implemented", "created", "improved", "reduced"}
+        if not any(token in verb_like for token in tokens):
+            return True
     if len(tokens) >= 3 and tokens[1] == "to" and (
         tokens[0].endswith("s") or tokens[0] in {"company", "companies", "client", "clients", "user", "users"}
     ):
@@ -3963,7 +4016,7 @@ def _deterministic_spelling_candidates(
         sentence_units = _sentence_units_from_analysis_units(analysis_units)
     else:
         sentence_units = _sentence_units_from_lines(normalized_lines)
-    excluded_unit_types = {"contact", "header", "url", "section_title"}
+    excluded_unit_types = {"contact", "header", "url", "section_title", "skills"}
     previous_sentence_text = ""
     for unit in sentence_units[:180]:
         sentence = _safe_str(unit.get("text"), max_len=800).strip()
@@ -4005,7 +4058,13 @@ def _deterministic_spelling_candidates(
                     }
                 )
 
-        if not is_bullet and _ATC_FRAGMENT_START_RE.match(sentence_lower) and not _ATC_FRAGMENT_CONTINUATION_RE.match(sentence_lower):
+        action_led_fragment = bool(_STRONG_ACTION_VERBS_RE.match(sentence.lstrip("- *\u2022\u25AA\u00b7\t")))
+        if (
+            not is_bullet
+            and not action_led_fragment
+            and _ATC_FRAGMENT_START_RE.match(sentence_lower)
+            and not _ATC_FRAGMENT_CONTINUATION_RE.match(sentence_lower)
+        ):
             candidates.append(
                 {
                     "text": sentence,
@@ -4022,6 +4081,7 @@ def _deterministic_spelling_candidates(
             and first_non_ws.islower()
             and not is_bullet
             and len(lexical_tokens) >= 3
+            and not re.match(r"^i[A-Z][A-Za-z]+", sentence)
             and not _looks_like_lowercase_clause_continuation(sentence, previous_sentence_text)
             and not _looks_like_wrapped_clause_artifact(sentence)
             and not _LOWERCASE_START_EXCEPTIONS.match(sentence)
