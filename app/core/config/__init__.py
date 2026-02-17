@@ -5,9 +5,6 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from .scoring import get_scoring_config, get_scoring_value
-
-
 def _load_legacy_settings_module() -> ModuleType:
     """Load existing app/core/config.py to keep backward compatibility."""
     legacy_path = Path(__file__).resolve().parent.parent / "config.py"
@@ -31,5 +28,4 @@ _legacy_settings = _load_legacy_settings_module()
 Settings = _legacy_settings.Settings
 settings = _legacy_settings.settings
 
-__all__ = ["Settings", "settings", "get_scoring_config", "get_scoring_value"]
-
+__all__ = ["Settings", "settings"]

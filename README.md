@@ -11,6 +11,14 @@ copy .env.example .env
 # set CORS_ALLOWED_ORIGINS / CORS_ALLOW_ORIGIN_REGEX for your frontend hosts
 # (optional) adjust RATE_LIMIT, RATE_LIMIT_ENABLED, LOG_LEVEL, SENTRY_DSN
 
+## API Surface (Portfolio Only)
+- `POST /v1/chat/stream`
+- `POST /v1/chat/feedback`
+- `GET /v1/health`
+- `GET /v1/analytics/*`
+- `POST /v1/actions/calendar/book`
+- `POST /v1/actions/calendar/availability`
+
 ## Ingest
 python -m scripts.ingest
 

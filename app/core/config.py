@@ -60,11 +60,6 @@ class Settings:
     analytics_db_path: str
     analytics_retention_days: int
     feedback_retention_days: int
-    tools_rate_limit_db_path: str
-    recruiter_share_db_path: str
-    recruiter_share_ttl_days: int
-    share_redact_sensitive_fields: bool
-    strict_share_id_entropy_bytes: int
     min_chunk_score: float
     contact_email: str
     contact_linkedin: str
@@ -112,11 +107,6 @@ settings = Settings(
     analytics_db_path=_get_env("ANALYTICS_DB_PATH", "data/analytics.db") or "data/analytics.db",
     analytics_retention_days=_get_env_int("ANALYTICS_RETENTION_DAYS", 180),
     feedback_retention_days=_get_env_int("FEEDBACK_RETENTION_DAYS", 180),
-    tools_rate_limit_db_path=_get_env("TOOLS_RATE_LIMIT_DB_PATH", "data/tools_rate_limit.db") or "data/tools_rate_limit.db",
-    recruiter_share_db_path=_get_env("RECRUITER_SHARE_DB_PATH", "data/recruiter_share.db") or "data/recruiter_share.db",
-    recruiter_share_ttl_days=_get_env_int("RECRUITER_SHARE_TTL_DAYS", 7),
-    share_redact_sensitive_fields=_get_env_bool("SHARE_REDACT_SENSITIVE_FIELDS", True),
-    strict_share_id_entropy_bytes=_get_env_int("STRICT_SHARE_ID_ENTROPY_BYTES", 18),
     min_chunk_score=float(_get_env("MIN_CHUNK_SCORE", "0.25") or "0.25"),
     contact_email=_get_env("CONTACT_EMAIL", "contact@codedbyasad.com") or "contact@codedbyasad.com",
     contact_linkedin=_get_env("CONTACT_LINKEDIN", "https://www.linkedin.com/in/asadmkhan") or "https://www.linkedin.com/in/asadmkhan",

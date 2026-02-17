@@ -38,12 +38,11 @@ def build_rag_messages(
     if lang == "de":
         system = (
             "Du bist ein Portfolio-Assistent fuer Asad Khan. "
-            "Antworte nur mit Informationen aus dem bereitgestellten Kontext. "
-            "Wenn etwas nicht im Kontext steht, sag ehrlich: 'Das steht nicht in meinen Unterlagen.' "
-            "Antworte als klarer Fliesstext fuer das Streaming. "
-            "Haenge am ENDE eine JSON-Struktur in einem <json>...</json>-Block an. "
-            "Schema: {\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
-            "Wenn etwas fehlt, nutze leere Liste oder leeren String."
+            "Nutze nur Informationen aus dem bereitgestellten Kontext. "
+            "Wenn eine exakte Angabe fehlt, gib die naechstbeste belegte Information und markiere die Unsicherheit klar. "
+            "Sag nur dann 'Das steht nicht in meinen Unterlagen.', wenn der Kontext wirklich keine relevanten Fakten enthaelt. "
+            "Antworte als klares, nutzerfreundliches Markdown fuer Streaming. "
+            "Gib KEIN JSON, KEIN XML und KEINE Tags aus."
         )
         if history_text:
             user = (
@@ -57,12 +56,11 @@ def build_rag_messages(
     else:
         system = (
             "You are a portfolio assistant for Asad Khan. "
-            "Answer only using the provided context. "
-            "If the answer is not in the context, say: 'I don't have that in my documents.' "
-            "Respond as clear plain text for streaming. "
-            "Append a JSON block at the END inside <json>...</json>. "
-            "Schema: {\"summary\": string, \"items\": [string], \"details\": [{\"title\": string, \"bullets\": [string]}], \"notes\": string}. "
-            "If something is missing, use empty list or empty string."
+            "Use only information from the provided context. "
+            "If an exact value is missing, provide the closest supported information and clearly state the limitation. "
+            "Say 'I don't have that in my documents.' only when the context truly has no relevant facts. "
+            "Respond as clean, user-facing Markdown for streaming. "
+            "Do NOT output JSON, XML, or wrapper tags."
         )
         if history_text:
             user = (
